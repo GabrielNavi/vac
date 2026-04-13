@@ -1,0 +1,13 @@
+Source: vx-dga-l-vac
+Priority: optional
+Maintainer: Gabriel Navia <correos@gabrielnav.es>
+Standards-Version: 4.6.0
+Build-Depends: debhelper-compat (= 13)
+Section: admin
+
+Package: vx-dga-l-vac
+Architecture: all
+Depends: bash, curl, jq, uuid-runtime, iproute2, veyon
+Description: Cliente de Autorregistro de Vitalinux (VAC)
+ Cliente Bash que registra el equipo en VAS, detecta cambios de configuracion
+ y actualiza automaticamente Veyon. Funciona como servicio systemd.

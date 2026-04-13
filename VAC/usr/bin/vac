@@ -1,0 +1,107 @@
+#!/bin/bash
+set -euo pipefail
+
+CONF_FILE="/etc/vac/vac.conf"
+ID_FILE="/etc/vac/vac-id"
+STATE_DIR="/var/lib/vac"
+VERSION_FILE="${STATE_DIR}/version"
+TMP_CONFIG="${STATE_DIR}/computers.json.tmp"
+
+VAS_HOST="${VAS_HOST:-}"
+RETRY_SECONDS=60
+CHECK_SECONDS=300
+VEYON_CONFIG="/etc/veyon/computers.json"
+CONFIG_ENDPOINT="/config"
+
+if [[ -f "$CONF_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONF_FILE"
+fi
+
+mkdir -p "$STATE_DIR"
+
+if [[ ! -f "$ID_FILE" ]]; then
+    uuidgen > "$ID_FILE"
+    chmod 600 "$ID_FILE"
+fi
+
+if [[ ! -f "$VERSION_FILE" ]]; then
+    echo "0" > "$VERSION_FILE"
+fi
+
+CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
+
+log() {
+    echo "[VAC] $*"
+}
+
+get_hostname() {
+    hostname -f 2>/dev/null || hostname
+}
+
+get_ip() {
+    ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}'
+}
+
+get_mac() {
+    ip link show 2>/dev/null | awk '/link\/ether/ {print $2; exit}'
+}
+
+register_client() {
+    local host ip mac payload
+    host="$(get_hostname)"
+    ip="$(get_ip)"
+    mac="$(get_mac)"
+
+    payload="$(jq -n \
+      --arg id "$CLIENT_ID" \
+      --arg hostname "$host" \
+      --arg ip "$ip" \
+      --arg mac "$mac" \
+      '{id:$id, hostname:$hostname, ip:$ip, mac:$mac}')"
+
+    curl -fsS -X POST "${VAS_HOST}/register" \
+      -H "Content-Type: application/json" \
+      -d "$payload" >/dev/null
+}
+
+get_remote_version() {
+    curl -fsS "${VAS_HOST}/version" | jq -r '.version'
+}
+
+download_and_apply_config() {
+    curl -fsS "${VAS_HOST}${CONFIG_ENDPOINT}" -o "$TMP_CONFIG"
+    install -m 0644 "$TMP_CONFIG" "$VEYON_CONFIG"
+
+    if command -v veyon-cli >/dev/null 2>&1; then
+        veyon-cli networkobjects import "$VEYON_CONFIG" || true
+    fi
+}
+
+while true; do
+    if [[ -z "$VAS_HOST" ]]; then
+        log "VAS_HOST no definido. Esperando ${RETRY_SECONDS}s."
+        sleep "$RETRY_SECONDS"
+        continue
+    fi
+
+    if ! register_client; then
+        log "No se pudo registrar en VAS. Reintentando en ${RETRY_SECONDS}s."
+        sleep "$RETRY_SECONDS"
+        continue
+    fi
+
+    local_version="$(tr -d '[:space:]' < "$VERSION_FILE")"
+    remote_version="$(get_remote_version || echo "$local_version")"
+
+    if [[ "$remote_version" != "$local_version" ]]; then
+        if download_and_apply_config; then
+            echo "$remote_version" > "$VERSION_FILE"
+            log "Configuracion aplicada. Version ${remote_version}."
+        else
+            log "Error al descargar/aplicar configuracion."
+        fi
+    fi
+
+    sleep "$CHECK_SECONDS"
+done

@@ -1,0 +1,3 @@
+usr/bin/vac usr/bin/
+etc/vac/vac.conf etc/vac/
+lib/systemd/system/vac.service lib/systemd/system/

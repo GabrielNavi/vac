@@ -1,0 +1,13 @@
+[Unit]
+Description=Vitalinux Autoregistration Client (VAC)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/vac
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
