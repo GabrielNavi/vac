@@ -1,3 +1,15 @@
+vx-dga-l-vac (0.1-2) unstable; urgency=medium
+
+  * Movimiento de raiz del arbol del paquete.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Tue, 14 Apr 2026 11:30:00 +0200
+
+vx-dga-l-vac (0.1-1) unstable; urgency=medium
+
+  * Anadidos checks de errores en VAC.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Tue, 14 Apr 2026 11:20:00 +0200
+
 vx-dga-l-vac (0.1-0) unstable; urgency=medium
 
   * Initial commit.
