@@ -1,4 +1,6 @@
 #!/bin/bash
+# VAC - Vitalinux Autoregistration Client
+
 set -euo pipefail
 
 CONF_FILE="/etc/vac/vac.conf"
@@ -31,27 +33,43 @@ fi
 
 CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
 
+# Emite mensajes con prefijo VAC para journald/systemd.
 log() {
     echo "[VAC] $*"
 }
 
+# Devuelve el hostname preferentemente en formato FQDN.
 get_hostname() {
     hostname -f 2>/dev/null || hostname
 }
 
+# Devuelve la IP de salida. Si no hay red lista, devuelve cadena vacia.
 get_ip() {
-    ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}'
+    ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}' || true
 }
 
+# Devuelve la primera MAC ethernet detectada. Si falla, devuelve vacio.
 get_mac() {
-    ip link show 2>/dev/null | awk '/link\/ether/ {print $2; exit}'
+    ip link show 2>/dev/null | awk '/link\/ether/ {print $2; exit}' || true
 }
 
+# Registra el cliente en VAS usando UUID persistente como identificador.
 register_client() {
     local host ip mac payload
     host="$(get_hostname)"
     ip="$(get_ip)"
     mac="$(get_mac)"
+
+    # IP vacía → no registrar
+    if [[ -z "$ip" ]]; then
+        log "IP vacía. No se registra."
+        return 1
+    fi
+
+    # MAC vacía → registrar igualmente
+    if [[ -z "$mac" ]]; then
+        log "MAC vacía. Registrando sin MAC."
+    fi
 
     payload="$(jq -n \
       --arg id "$CLIENT_ID" \
@@ -60,24 +78,40 @@ register_client() {
       --arg mac "$mac" \
       '{id:$id, hostname:$hostname, ip:$ip, mac:$mac}')"
 
-    curl -fsS -X POST "${VAS_HOST}/register" \
+    curl -fsS -X POST "${VAS_HOST%/}/register" \
       -H "Content-Type: application/json" \
       -d "$payload" >/dev/null
 }
 
+# Consulta la version de configuracion publicada por VAS.
 get_remote_version() {
-    curl -fsS "${VAS_HOST}/version" | jq -r '.version'
+    curl -fsS "${VAS_HOST%/}/version" | jq -r '.version'
 }
 
+# Descarga el JSON remoto y lo instala localmente, importandolo en Veyon si existe.
 download_and_apply_config() {
-    curl -fsS "${VAS_HOST}${CONFIG_ENDPOINT}" -o "$TMP_CONFIG"
+    curl -fsS "${VAS_HOST%/}${CONFIG_ENDPOINT}" -o "$TMP_CONFIG"
+
+    local dest_dir
+    dest_dir="$(dirname "$VEYON_CONFIG")"
+    mkdir -p "$dest_dir"
+
     install -m 0644 "$TMP_CONFIG" "$VEYON_CONFIG"
 
-    if command -v veyon-cli >/dev/null 2>&1; then
-        veyon-cli networkobjects import "$VEYON_CONFIG" || true
+    if ! command -v veyon-cli >/dev/null 2>&1; then
+        log "veyon-cli no encontrado. Configuración escrita en '$VEYON_CONFIG', pero no importada."
+        return 0
     fi
+
+    if ! veyon-cli networkobjects import "$VEYON_CONFIG"; then
+        log "Error al importar configuración en Veyon."
+        return 1
+    fi
+
+    return 0
 }
 
+# Bucle de servicio: registrar, comprobar version y aplicar cambios cuando corresponda.
 while true; do
     if [[ -z "$VAS_HOST" ]]; then
         log "VAS_HOST no definido. Esperando ${RETRY_SECONDS}s."
@@ -92,16 +126,28 @@ while true; do
     fi
 
     local_version="$(tr -d '[:space:]' < "$VERSION_FILE")"
-    remote_version="$(get_remote_version || echo "$local_version")"
+
+    # Obtener versión remota con log si falla
+    remote_version_raw="$(get_remote_version || echo "")"
+    if [[ -z "$remote_version_raw" ]]; then
+        log "No se pudo obtener la versión remota. Usando versión local."
+        remote_version="$local_version"
+    elif [[ "$remote_version_raw" =~ ^[0-9]+$ ]]; then
+        remote_version="$remote_version_raw"
+    else
+        log "Versión remota inválida: '$remote_version_raw'. Usando versión local."
+        remote_version="$local_version"
+    fi
 
     if [[ "$remote_version" != "$local_version" ]]; then
         if download_and_apply_config; then
             echo "$remote_version" > "$VERSION_FILE"
-            log "Configuracion aplicada. Version ${remote_version}."
+            log "Configuración aplicada correctamente. Versión ${remote_version}."
         else
-            log "Error al descargar/aplicar configuracion."
+            log "Error al descargar/aplicar configuración. Se mantiene versión local ${local_version}."
         fi
     fi
 
     sleep "$CHECK_SECONDS"
 done
+
