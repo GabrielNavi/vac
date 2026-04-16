@@ -14,6 +14,7 @@ RETRY_SECONDS=60
 CHECK_SECONDS=300
 VEYON_CONFIG="/etc/veyon/computers.json"
 CONFIG_ENDPOINT="/config"
+VEYON_ROOM="Autoregistrados"
 
 if [[ -f "$CONF_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -103,8 +104,23 @@ download_and_apply_config() {
         return 0
     fi
 
-    if ! veyon-cli networkobjects import "$VEYON_CONFIG"; then
-        log "Error al importar configuración en Veyon."
+    # Veyon CLI de Vitalinux no importa JSON directamente con networkobjects import.
+    # Convertimos computers.json a CSV y usamos la sintaxis: import <FILE> room <ROOM> format <FORMAT>.
+    local csv_file
+    csv_file="${STATE_DIR}/computers.csv"
+
+    if ! jq -r '.computers[]? | "\(.hostname);\(.ip);\(.mac // "")"' "$TMP_CONFIG" > "$csv_file"; then
+        log "Error al convertir configuración JSON a CSV para Veyon."
+        return 1
+    fi
+
+    if ! veyon-cli networkobjects clear; then
+        log "Error al limpiar objetos de red en Veyon antes de importar."
+        return 1
+    fi
+
+    if ! veyon-cli networkobjects import "$csv_file" room "$VEYON_ROOM" format "%name%;%host%;%mac%"; then
+        log "Error al importar configuración en Veyon con formato CSV."
         return 1
     fi
 

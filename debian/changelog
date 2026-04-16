@@ -1,3 +1,13 @@
+vx-dga-l-vac (0.1-3) unstable; urgency=medium
+
+  * Corregida la importacion de configuracion en Veyon para la version
+    legacy de networkobjects import.
+  * VAC ahora convierte computers.json a CSV y usa room/format en la
+    importacion, evitando el error de argumentos insuficientes.
+  * Añadida la variable configurable VEYON_ROOM en vac.conf.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Wed, 16 Apr 2026 10:30:00 +0200
+
 vx-dga-l-vac (0.1-2) unstable; urgency=medium
 
   * Movimiento de raiz del arbol del paquete.
