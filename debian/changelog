@@ -1,3 +1,12 @@
+vx-dga-l-vac (0.1-4) unstable; urgency=medium
+
+  * Corregido el argumento de importacion de Veyon: "location" en lugar de
+    "room" para ajustarse a la sintaxis legacy del comando networkobjects.
+  * Se mantiene la conversion de computers.json a CSV y el uso de
+    VEYON_ROOM como ubicacion de destino.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Wed, 16 Apr 2026 10:45:00 +0200
+
 vx-dga-l-vac (0.1-3) unstable; urgency=medium
 
   * Corregida la importacion de configuracion en Veyon para la version
