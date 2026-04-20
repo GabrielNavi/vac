@@ -1,3 +1,22 @@
+vx-dga-l-vac (0.2-2) unstable; urgency=medium
+
+  * Corregida la interoperabilidad con Veyon para no borrar todos los
+    networkobjects globales en cada actualización.
+  * VAC ahora limpia solo la location gestionada (VEYON_ROOM) antes de
+    importar, evitando afectar otras ubicaciones.
+  * Endurecida la conversión CSV sanitizando ';' en hostname/IP/MAC.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Sun, 20 Apr 2026 12:10:00 +0200
+
+vx-dga-l-vac (0.2-1) unstable; urgency=medium
+
+  * Ajustada la importacion de networkobjects para usar formato completo
+    con %type%, %name%, %host%, %mac% y %location%.
+  * El CSV generado por VAC ahora incluye tipo "computer" y ubicacion,
+    mejorando compatibilidad con la documentacion actual de Veyon.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Sun, 20 Apr 2026 10:30:00 +0200
+
 vx-dga-l-vac (0.1-4) unstable; urgency=medium
 
   * Corregido el argumento de importacion de Veyon: "location" en lugar de

@@ -105,21 +105,23 @@ download_and_apply_config() {
     fi
 
     # Veyon CLI de Vitalinux no importa JSON directamente con networkobjects import.
-    # Convertimos computers.json a CSV y usamos la sintaxis: import <FILE> location <LOCATION> format <FORMAT>.
-    local csv_file
+    # Convertimos computers.json a CSV y usamos un formato completo con
+    # %type%, %name%, %host%, %mac% y %location%.
+    local csv_file safe_location
     csv_file="${STATE_DIR}/computers.csv"
+    safe_location="${VEYON_ROOM//;/}"
 
-    if ! jq -r '.computers[]? | "\(.hostname);\(.ip);\(.mac // "")"' "$TMP_CONFIG" > "$csv_file"; then
+    if ! jq -r --arg location "$safe_location" '.computers[]? | "computer;\((.hostname // "" | gsub(";"; "")));\((.ip // "" | gsub(";"; "")));\((.mac // "" | gsub(";"; "")));\($location)"' "$TMP_CONFIG" > "$csv_file"; then
         log "Error al convertir configuración JSON a CSV para Veyon."
         return 1
     fi
 
-    if ! veyon-cli networkobjects clear; then
-        log "Error al limpiar objetos de red en Veyon antes de importar."
-        return 1
+    # Eliminamos solo la location gestionada por VAC para no afectar otras.
+    if ! veyon-cli networkobjects remove "$safe_location" >/dev/null 2>&1; then
+        log "No se pudo limpiar la location '$safe_location' en Veyon. Continuando con importación."
     fi
 
-    if ! veyon-cli networkobjects import "$csv_file" location "$VEYON_ROOM" format "%name%;%host%;%mac%"; then
+    if ! veyon-cli networkobjects import "$csv_file" format "%type%;%name%;%host%;%mac%;%location%"; then
         log "Error al importar configuración en Veyon con formato CSV."
         return 1
     fi
