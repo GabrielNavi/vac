@@ -4,6 +4,7 @@ set -e
 echo "[VAC] Ejecutando postinst..."
 
 mkdir -p /etc/vac
+mkdir -p /etc/vac/vac.conf.d
 mkdir -p /var/lib/vac
 
 if [ ! -f /etc/vac/vac-id ]; then

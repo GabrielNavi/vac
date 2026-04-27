@@ -1,3 +1,11 @@
+vx-dga-l-vac (0.2-3) unstable; urgency=medium
+
+  * Añadido soporte de subconfiguracion en /etc/vac/vac.conf.d/*.conf
+    para permitir overlays sin modificar vac.conf base.
+  * postinst asegura la creacion de /etc/vac/vac.conf.d.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Mon, 27 Apr 2026 10:35:00 +0200
+
 vx-dga-l-vac (0.2-2) unstable; urgency=medium
 
   * Corregida la interoperabilidad con Veyon para no borrar todos los

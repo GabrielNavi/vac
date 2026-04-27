@@ -4,6 +4,7 @@
 set -euo pipefail
 
 CONF_FILE="/etc/vac/vac.conf"
+CONF_DIR="/etc/vac/vac.conf.d"
 ID_FILE="/etc/vac/vac-id"
 STATE_DIR="/var/lib/vac"
 VERSION_FILE="${STATE_DIR}/version"
@@ -19,6 +20,15 @@ VEYON_ROOM="Autoregistrados"
 if [[ -f "$CONF_FILE" ]]; then
     # shellcheck disable=SC1090
     source "$CONF_FILE"
+fi
+
+if [[ -d "$CONF_DIR" ]]; then
+    # Aplica overlays en orden lexical: /etc/vac/vac.conf.d/*.conf
+    for cfg in "$CONF_DIR"/*.conf; do
+        [[ -f "$cfg" ]] || continue
+        # shellcheck disable=SC1090
+        source "$cfg"
+    done
 fi
 
 mkdir -p "$STATE_DIR"
