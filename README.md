@@ -21,7 +21,7 @@ Este paquete instala VAC en el sistema para su despliegue mediante Migasfree en 
 ## Informacion del Paquete
 
 - Nombre: vx-dga-l-vac
-- Version: 0.1-4
+- Version: 0.2-3
 - Arquitectura: all
 - Mantenedor: Gabriel Navia <correos@gabrielnav.es>
 - Licencia: GPL-3.0+
@@ -57,10 +57,10 @@ VAC implementa el flujo de autoregistro y sincronización continua:
 4. Descarga y aplicación de configuración
    - Si la versión cambia, descarga GET /config.
    - Guarda el JSON en VEYON_CONFIG.
-   - Convierte computers.json a CSV para compatibilidad con Veyon CLI legacy.
+    - Convierte computers.json a CSV para compatibilidad con Veyon CLI.
    - Ejecuta importación con:
-     - veyon-cli networkobjects clear
-     - veyon-cli networkobjects import <CSV> location <LOCATION> format "%name%;%host%;%mac%"
+       - veyon-cli networkobjects remove <LOCATION_GESTIONADA>
+       - veyon-cli networkobjects import <CSV> format "%type%;%name%;%host%;%mac%;%location%"
 
 5. Reintentos
    - Si falla registro, versión o aplicación, VAC no avanza versión local y reintenta según la temporización configurada.
@@ -76,6 +76,12 @@ VAC implementa el flujo de autoregistro y sincronización continua:
 ## Configuracion
 
 Archivo de configuración: etc/vac/vac.conf
+
+Sobreescrituras por subconfiguración: /etc/vac/vac.conf.d/*.conf
+
+El orden de carga es:
+1. /etc/vac/vac.conf
+2. /etc/vac/vac.conf.d/*.conf (orden lexical)
 
 Variables principales:
 
