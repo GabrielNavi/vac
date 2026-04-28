@@ -7,7 +7,7 @@ Section: admin
 
 Package: vx-dga-l-vac
 Architecture: all
-Depends: bash, curl, jq, uuid-runtime, iproute2, veyon
+Depends: bash, curl, jq, uuid-runtime, iproute2
 Description: Cliente de Autorregistro de Vitalinux (VAC)
  Cliente Bash que registra el equipo en VAS, detecta cambios de configuracion
  y actualiza automaticamente Veyon. Funciona como servicio systemd.
