@@ -1,3 +1,9 @@
+vx-dga-l-vac (0.2-4) unstable; urgency=medium
+
+  * Retirado dependencia de Veyon, el sistema de inventario es capaz de funcionar sin el.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Mon, 27 Apr 2026 10:35:00 +0200
+
 vx-dga-l-vac (0.2-3) unstable; urgency=medium
 
   * Añadido soporte de subconfiguracion en /etc/vac/vac.conf.d/*.conf
