@@ -49,6 +49,8 @@ log() {
     echo "[VAC] $*"
 }
 
+log "VAC iniciado. VAS_HOST=$VAS_HOST, CHECK_SECONDS=$CHECK_SECONDS, RETRY_SECONDS=$RETRY_SECONDS"
+
 # Devuelve el hostname preferentemente en formato FQDN.
 get_hostname() {
     hostname -f 2>/dev/null || hostname
@@ -66,21 +68,23 @@ get_mac() {
 
 # Registra el cliente en VAS usando UUID persistente como identificador.
 register_client() {
-    local host ip mac payload
+    local host ip mac payload response
     host="$(get_hostname)"
     ip="$(get_ip)"
     mac="$(get_mac)"
 
     # IP vacía → no registrar
     if [[ -z "$ip" ]]; then
-        log "IP vacía. No se registra."
+        log "[REGISTER] IP vacía. No se registra."
         return 1
     fi
 
     # MAC vacía → registrar igualmente
     if [[ -z "$mac" ]]; then
-        log "MAC vacía. Registrando sin MAC."
+        log "[REGISTER] MAC vacía. Registrando sin MAC."
     fi
+
+    log "[REGISTER] Registrando cliente ID=$CLIENT_ID, hostname=$host, IP=$ip, MAC=${mac:-(vacía)}"
 
     payload="$(jq -n \
       --arg id "$CLIENT_ID" \
@@ -89,28 +93,44 @@ register_client() {
       --arg mac "$mac" \
       '{id:$id, hostname:$hostname, ip:$ip, mac:$mac}')"
 
-    curl -fsS -X POST "${VAS_HOST%/}/register" \
+    # Capturamos la respuesta para extraer versión si el servidor la devuelve.
+    response=$(curl -fsS -X POST "${VAS_HOST%/}/register" \
       -H "Content-Type: application/json" \
-      -d "$payload" >/dev/null
+      -d "$payload" 2>/dev/null) || response=""
+
+    if [[ -n "$response" ]]; then
+        log "[REGISTER] Respuesta del servidor: $response"
+        # Devolvemos la respuesta (JSON) para quien llame a la función.
+        echo "$response"
+        return 0
+    else
+        log "[REGISTER] Registro fallido (sin respuesta)"
+        return 1
+    fi
 }
 
 # Consulta la version de configuracion publicada por VAS.
 get_remote_version() {
-    curl -fsS "${VAS_HOST%/}/version" | jq -r '.version'
+    curl -fsS "${VAS_HOST%/}/version" | jq -r '.version' || echo ""
 }
 
 # Descarga el JSON remoto y lo instala localmente, importandolo en Veyon si existe.
 download_and_apply_config() {
-    curl -fsS "${VAS_HOST%/}${CONFIG_ENDPOINT}" -o "$TMP_CONFIG"
+    log "[SYNC] Descargando configuración desde ${VAS_HOST%/}${CONFIG_ENDPOINT}"
+    curl -fsS "${VAS_HOST%/}${CONFIG_ENDPOINT}" -o "$TMP_CONFIG" || {
+        log "[SYNC-ERROR] Error descargando configuración"
+        return 1
+    }
 
     local dest_dir
     dest_dir="$(dirname "$VEYON_CONFIG")"
     mkdir -p "$dest_dir"
 
     install -m 0644 "$TMP_CONFIG" "$VEYON_CONFIG"
+    log "[SYNC] Configuración instalada en $VEYON_CONFIG"
 
     if ! command -v veyon-cli >/dev/null 2>&1; then
-        log "veyon-cli no encontrado. Configuración escrita en '$VEYON_CONFIG', pero no importada."
+        log "[SYNC] veyon-cli no encontrado. Configuración escrita pero no importada."
         return 0
     fi
 
@@ -122,20 +142,23 @@ download_and_apply_config() {
     safe_location="${VEYON_ROOM//;/}"
 
     if ! jq -r --arg location "$safe_location" '.computers[]? | "computer;\((.hostname // "" | gsub(";"; "")));\((.ip // "" | gsub(";"; "")));\((.mac // "" | gsub(";"; "")));\($location)"' "$TMP_CONFIG" > "$csv_file"; then
-        log "Error al convertir configuración JSON a CSV para Veyon."
+        log "[SYNC-ERROR] Error al convertir JSON a CSV"
         return 1
     fi
 
+    log "[SYNC-VEYON] Limpiando location: $safe_location"
     # Eliminamos solo la location gestionada por VAC para no afectar otras.
     if ! veyon-cli networkobjects remove "$safe_location" >/dev/null 2>&1; then
-        log "No se pudo limpiar la location '$safe_location' en Veyon. Continuando con importación."
+        log "[SYNC-VEYON] Aviso: no se pudo limpiar location. Continuando."
     fi
 
-    if ! veyon-cli networkobjects import "$csv_file" format "%type%;%name%;%host%;%mac%;%location%"; then
-        log "Error al importar configuración en Veyon con formato CSV."
+    log "[SYNC-VEYON] Importando equipos en Veyon"
+    if ! veyon-cli networkobjects import "$csv_file" format "%type%;%name%;%host%;%mac%;%location%" >/dev/null 2>&1; then
+        log "[SYNC-ERROR] Fallo al importar en Veyon"
         return 1
     fi
 
+    log "[SYNC] Configuración aplicada correctamente"
     return 0
 }
 
@@ -168,11 +191,84 @@ while true; do
     fi
 
     if [[ "$remote_version" != "$local_version" ]]; then
-        if download_and_apply_config; then
-            echo "$remote_version" > "$VERSION_FILE"
-            log "Configuración aplicada correctamente. Versión ${remote_version}."
+        log "[SYNC] Nueva versión detectada: $local_version → $remote_version"
+
+        # Descargar configuración temporal para inspección
+        log "[SYNC] Descargando configuración temporal para verificación de presencia/local-diff"
+        if ! curl -fsS "${VAS_HOST%/}${CONFIG_ENDPOINT}" -o "$TMP_CONFIG"; then
+            log "[SYNC-ERROR] Error descargando configuración temporal"
+            sleep "$RETRY_SECONDS"
+            continue
+        fi
+
+        # ¿Está el cliente en la configuración remota?
+        if jq -e --arg id "$CLIENT_ID" '.computers[]? | select(.id==$id)' "$TMP_CONFIG" >/dev/null 2>&1; then
+            log "[SYNC] Cliente presente en configuración remota (id=$CLIENT_ID). Comprobando diferencias de datos..."
+
+            remote_ip="$(jq -r --arg id "$CLIENT_ID" '.computers[]? | select(.id==$id) | .ip // ""' "$TMP_CONFIG")"
+            remote_hostname="$(jq -r --arg id "$CLIENT_ID" '.computers[]? | select(.id==$id) | .hostname // ""' "$TMP_CONFIG")"
+            remote_mac="$(jq -r --arg id "$CLIENT_ID" '.computers[]? | select(.id==$id) | .mac // ""' "$TMP_CONFIG")"
+
+            local_host="$(get_hostname)"
+            local_ip="$(get_ip)"
+            local_mac="$(get_mac)"
+
+            if [[ "$remote_ip" != "$local_ip" ]] || [[ "$remote_hostname" != "$local_host" ]] || [[ "$remote_mac" != "$local_mac" ]]; then
+                log "[SYNC] Datos remotos difieren (remote: ${remote_ip}/${remote_hostname}/${remote_mac} vs local: ${local_ip}/${local_host}/${local_mac}). Enviando actualización al VAS."
+                resp="$(register_client || echo "")"
+                if [[ -n "$resp" ]]; then
+                    new_ver="$(echo "$resp" | jq -r '.version // empty' 2>/dev/null || echo "")"
+                    if [[ -n "$new_ver" ]]; then
+                        log "[SYNC] VAS respondió con nueva versión: $new_ver. Descargando y aplicando configuración actualizada."
+                        if download_and_apply_config; then
+                            echo "$new_ver" > "$VERSION_FILE"
+                            log "[SYNC] Sincronización completada. Versión local actualizada a ${new_ver}."
+                        else
+                            log "[SYNC-ERROR] Error al aplicar configuración tras registro. Manteniendo versión local $local_version."
+                        fi
+                    else
+                        log "[SYNC] Registro enviado pero no se recibió nueva versión del VAS. Reintentando descarga y aplicación."
+                        if download_and_apply_config; then
+                            echo "$remote_version" > "$VERSION_FILE"
+                            log "[SYNC] Configuración aplicada (versión remota previa). Versión local actualizada a ${remote_version}."
+                        else
+                            log "[SYNC-ERROR] No se pudo aplicar configuración después de registro."
+                        fi
+                    fi
+                else
+                    log "[SYNC-ERROR] Falló el registro de actualización. Reintentando en ${RETRY_SECONDS}s."
+                    sleep "$RETRY_SECONDS"
+                fi
+            else
+                log "[SYNC] Cliente presente y datos coinciden. Aplicando configuración remota."
+                if download_and_apply_config; then
+                    echo "$remote_version" > "$VERSION_FILE"
+                    log "[SYNC] Sincronización completada exitosamente. Versión local actualizada a ${remote_version}."
+                else
+                    log "[SYNC-ERROR] Error al descargar/aplicar configuración. Se mantiene versión local ${local_version}."
+                fi
+            fi
         else
-            log "Error al descargar/aplicar configuración. Se mantiene versión local ${local_version}."
+            log "[SYNC] Cliente NO figura en la configuración remota (id=$CLIENT_ID). Enviando registro para agregarse."
+            resp="$(register_client || echo "")"
+            if [[ -n "$resp" ]]; then
+                new_ver="$(echo "$resp" | jq -r '.version // empty' 2>/dev/null || echo "")"
+                if [[ -n "$new_ver" ]]; then
+                    log "[SYNC] VAS generó versión $new_ver al agregar cliente; descargando y aplicando configuración."
+                    if download_and_apply_config; then
+                        echo "$new_ver" > "$VERSION_FILE"
+                        log "[SYNC] Sincronización completada exitosamente. Versión local actualizada a ${new_ver}."
+                    else
+                        log "[SYNC-ERROR] Fallo al aplicar configuración tras alta de cliente."
+                    fi
+                else
+                    log "[SYNC] Registro realizado pero no se devolvió versión; esperaremos antes de reintentar."
+                    sleep "$RETRY_SECONDS"
+                fi
+            else
+                log "[SYNC-ERROR] Registro fallido. Reintentando en ${RETRY_SECONDS}s."
+                sleep "$RETRY_SECONDS"
+            fi
         fi
     fi
 
