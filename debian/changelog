@@ -1,3 +1,9 @@
+vx-dga-l-vac (0.3-1) unstable; urgency=medium
+
+  * Overhaul mayor sobre logging para depuración de errores
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Mon, 4 May 2026 10:35:00 +0200
+
 vx-dga-l-vac (0.2-4) unstable; urgency=medium
 
   * Retirado dependencia de Veyon, el sistema de inventario es capaz de funcionar sin el.
