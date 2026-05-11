@@ -1,3 +1,17 @@
+vx-dga-l-vac (0.4-3) unstable; urgency=low
+
+  * Añadidos comentarios de sección y de función en usr/bin/vac.
+  * Logging extensivo para depuración con journalctl -u vac -f:
+    - Banner de arranque con UUID, VAS_HOST, CHECK, RETRY, STATE_DIR.
+    - load_conf informa cuántas claves cargó por fichero.
+    - register_client: hostname/IP/MAC con etiquetas; motivo de aborto si IP vacía.
+    - client_data_matches: comparativa campo a campo (remoto vs local)
+      indicando cuáles discuerdan.
+    - Bucle principal: timestamp UTC al inicio de cada ciclo; prefijos
+      [REGISTER], [VERSION], [SYNC], [SYNC-ERROR] filtrables.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Sun, 11 May 2026 15:00:00 +0200
+
 vx-dga-l-vac (0.4-2) unstable; urgency=medium
 
   * Corregido get_mac: eliminado flag -o de ip link show. Con salida

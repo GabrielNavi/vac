@@ -1,8 +1,23 @@
 #!/bin/bash
-# VAC - Vitalinux Autoregistration Client
+# VAC — Vitalinux Autoregistration Client
+#
+# Servicio systemd que registra este equipo en VAS y mantiene una copia
+# local del inventario de red en /var/lib/vac/clients.json.
+#
+# Flujo de cada ciclo:
+#   1. POST /register  → heartbeat + datos actuales (actualiza last_seen en VAS)
+#   2. GET /version    → comparar con versión local
+#   3. Si difiere: GET /clients → guardar local → comprobar datos propios
+#      3a. Datos correctos: actualizar versión local
+#      3b. Datos ausentes/discordantes: POST /register de nuevo
+#
+# Journalctl: journalctl -u vac -f
 
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# Rutas y valores por defecto
+# ---------------------------------------------------------------------------
 CONF_FILE="/etc/vac/vac.conf"
 CONF_DIR="/etc/vac/vac.conf.d"
 ID_FILE="/etc/vac/vac-id"
@@ -15,22 +30,30 @@ VAS_HOST=""
 RETRY_SECONDS=60
 CHECK_SECONDS=300
 
-# Parser seguro: no ejecuta código del fichero de configuración.
+# ---------------------------------------------------------------------------
+# Carga de configuración
+# ---------------------------------------------------------------------------
+
+# Parser seguro: lee clave=valor sin ejecutar código del fichero.
+# Solo acepta las variables conocidas; el resto se ignora.
 load_conf() {
     local file="$1"
     [ -f "$file" ] || return 0
 
+    local loaded=0
     while IFS='=' read -r key val; do
         key="$(echo "$key" | xargs 2>/dev/null || true)"
         val="$(echo "$val" | xargs 2>/dev/null | sed 's/^"//; s/"$//' || true)"
         [ -z "$key" ] && continue
 
         case "$key" in
-            VAS_HOST)        VAS_HOST="$val"        ;;
-            RETRY_SECONDS)   RETRY_SECONDS="$val"   ;;
-            CHECK_SECONDS)   CHECK_SECONDS="$val"   ;;
+            VAS_HOST)        VAS_HOST="$val";        (( loaded++ )) ;;
+            RETRY_SECONDS)   RETRY_SECONDS="$val";   (( loaded++ )) ;;
+            CHECK_SECONDS)   CHECK_SECONDS="$val";   (( loaded++ )) ;;
         esac
     done < <(grep -v '^\s*#' "$file" | grep '=' || true)
+
+    echo "[VAC] Config cargada desde $file: $loaded clave(s)"
 }
 
 load_conf "$CONF_FILE"
@@ -42,38 +65,60 @@ if [[ -d "$CONF_DIR" ]]; then
     done
 fi
 
+# ---------------------------------------------------------------------------
+# Inicialización del estado local
+# ---------------------------------------------------------------------------
 mkdir -p "$STATE_DIR"
 
+# Generar UUID persistente si no existe (también lo hace postinst)
 if [[ ! -f "$ID_FILE" ]]; then
     uuidgen > "$ID_FILE"
     chmod 600 "$ID_FILE"
+    echo "[VAC] UUID generado: $(cat "$ID_FILE")"
 fi
 
+# Inicializar fichero de versión local
 if [[ ! -f "$VERSION_FILE" ]]; then
     echo "0" > "$VERSION_FILE"
+    echo "[VAC] Fichero de versión inicializado: $VERSION_FILE → 0"
 fi
 
 CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
 
+# ---------------------------------------------------------------------------
+# Funciones de logging y red
+# ---------------------------------------------------------------------------
+
+# Prefijo [VAC] en todos los mensajes para facilitar filtrado en journalctl:
+#   journalctl -u vac -f | grep "\[VAC-SYNC\]"
 log() {
     echo "[VAC] $*"
 }
 
-log "Iniciado. VAS_HOST=${VAS_HOST:-'(no definido)'} CHECK=${CHECK_SECONDS}s RETRY=${RETRY_SECONDS}s"
+log "=== Iniciando VAC ==="
+log "UUID:        $CLIENT_ID"
+log "VAS_HOST:    ${VAS_HOST:-'(no definido)'}"
+log "CHECK:       ${CHECK_SECONDS}s"
+log "RETRY:       ${RETRY_SECONDS}s"
+log "STATE_DIR:   $STATE_DIR"
 
+# Devuelve el FQDN del equipo; si falla, el hostname corto.
 get_hostname() {
     hostname -f 2>/dev/null || hostname
 }
 
+# Devuelve la IP de salida usando la tabla de rutas.
+# Funciona aunque no haya conectividad real a 1.1.1.1 (consulta local).
 get_ip() {
     ip route get 1.1.1.1 2>/dev/null \
         | awk '/src/ { for (i=1;i<=NF;i++) if ($i=="src") { print $(i+1); exit } }' \
         || true
 }
 
-# Devuelve la primera MAC de una interfaz física (eth, ens, enp, wlan, wlp).
-# Excluye loopback, bridges, veth y otras interfaces virtuales.
-# Usa ip link show sin -o: la salida multilínea permite el patrón de dos fases.
+# Devuelve la MAC de la primera interfaz física detectada.
+# Usa ip link show sin -o para obtener salida multilínea: el awk
+# de dos fases (nombre de interfaz → línea link/ether) funciona correctamente.
+# Filtra prefijos físicos conocidos: eth, ens, enp, wlan, wlp.
 get_mac() {
     ip link show 2>/dev/null \
         | awk '/^[0-9]+: (eth|ens|enp|wlan|wlp)/ { iface=1; next }
@@ -82,22 +127,33 @@ get_mac() {
         || true
 }
 
-# Registra el cliente en VAS. Devuelve la respuesta JSON o cadena vacía si falla.
-# Siempre se llama al inicio del ciclo como heartbeat y registro.
+# ---------------------------------------------------------------------------
+# Funciones principales del cliente
+# ---------------------------------------------------------------------------
+
+# Recopila hostname, IP y MAC actuales, construye el payload JSON
+# y lo envía a POST /register. Sirve como heartbeat (actualiza last_seen
+# siempre) y como registro inicial o de actualización.
+# Imprime la respuesta JSON del servidor y devuelve 0 si tuvo éxito.
 register_client() {
     local host ip mac payload response
+
     host="$(get_hostname)"
     ip="$(get_ip)"
     mac="$(get_mac)"
 
+    log "[REGISTER] Recopilando datos del equipo:"
+    log "[REGISTER]   hostname : $host"
+    log "[REGISTER]   ip       : ${ip:-(vacía)}"
+    log "[REGISTER]   mac      : ${mac:-(vacía)}"
+
+    # Sin IP no tiene sentido registrar: el servidor la necesita como dato clave.
     if [[ -z "$ip" ]]; then
-        log "[REGISTER] IP vacía. No se registra."
+        log "[REGISTER] IP vacía — sin red activa. Abortando registro."
         return 1
     fi
 
-    [[ -z "$mac" ]] && log "[REGISTER] MAC vacía. Registrando sin MAC."
-
-    log "[REGISTER] ID=$CLIENT_ID host=$host IP=$ip MAC=${mac:-(vacía)}"
+    [[ -z "$mac" ]] && log "[REGISTER] MAC vacía (interfaz virtual o sin detección). Registrando sin MAC."
 
     payload="$(jq -n \
         --arg id       "$CLIENT_ID" \
@@ -106,6 +162,8 @@ register_client() {
         --arg mac      "$mac"       \
         '{id:$id, hostname:$hostname, ip:$ip, mac:$mac}')"
 
+    log "[REGISTER] Enviando POST ${VAS_HOST%/}/register ..."
+
     response="$(curl -fsS \
         --max-time 10 --connect-timeout 5 \
         -X POST "${VAS_HOST%/}/register" \
@@ -113,15 +171,17 @@ register_client() {
         -d "$payload" 2>/dev/null)" || response=""
 
     if [[ -n "$response" ]]; then
-        log "[REGISTER] Respuesta: $response"
+        log "[REGISTER] Respuesta VAS: $response"
         echo "$response"
         return 0
     else
-        log "[REGISTER] Sin respuesta del servidor."
+        log "[REGISTER] Sin respuesta de VAS (timeout o error de red)."
         return 1
     fi
 }
 
+# Consulta GET /version en VAS y devuelve el valor de .version.
+# Devuelve cadena vacía si la petición falla.
 get_remote_version() {
     curl -fsS --max-time 10 --connect-timeout 5 \
         "${VAS_HOST%/}/version" 2>/dev/null \
@@ -129,106 +189,154 @@ get_remote_version() {
         || echo ""
 }
 
-# Descarga el registro de clientes y lo guarda en CLIENTS_FILE.
+# Descarga el inventario completo desde GET /clients y lo guarda en
+# CLIENTS_FILE usando un fichero temporal para garantizar atomicidad:
+# si la descarga falla a mitad, CLIENTS_FILE no queda corrupto.
 download_clients() {
-    log "[SYNC] Descargando registro desde ${VAS_HOST%/}/clients"
+    log "[SYNC] Descargando inventario: ${VAS_HOST%/}/clients"
 
     if curl -fsS --max-time 15 --connect-timeout 5 \
         "${VAS_HOST%/}/clients" -o "$TMP_CLIENTS" 2>/dev/null; then
+
+        local count
+        count="$(jq '.clients | length' "$TMP_CLIENTS" 2>/dev/null || echo '?')"
         mv "$TMP_CLIENTS" "$CLIENTS_FILE"
-        log "[SYNC] Registro guardado en $CLIENTS_FILE"
+        log "[SYNC] Inventario guardado: $CLIENTS_FILE ($count equipo(s))"
         return 0
     else
-        log "[SYNC-ERROR] Error descargando registro."
+        log "[SYNC-ERROR] Error descargando inventario. CLIENTS_FILE no modificado."
         rm -f "$TMP_CLIENTS"
         return 1
     fi
 }
 
-# Comprueba si los datos locales del cliente coinciden con lo que hay en el registro.
+# Comprueba si los datos de este cliente en el inventario remoto coinciden
+# con los valores actuales del equipo (hostname, IP, MAC).
+# Devuelve 0 (éxito/coincide) o 1 (ausente o discordante).
 client_data_matches() {
-    [[ -f "$CLIENTS_FILE" ]] || return 1
+    [[ -f "$CLIENTS_FILE" ]] || {
+        log "[SYNC] clients.json no existe aún. Asumiendo discordancia."
+        return 1
+    }
 
-    # Primero verificar que el cliente existe en el registro.
-    jq -e --arg id "$CLIENT_ID" \
-        '.clients[]? | select(.id==$id)' "$CLIENTS_FILE" >/dev/null 2>&1 || return 1
+    # Paso 1: comprobar si este UUID figura en el inventario
+    if ! jq -e --arg id "$CLIENT_ID" \
+        '.clients[]? | select(.id==$id)' "$CLIENTS_FILE" >/dev/null 2>&1; then
+        log "[SYNC] Este cliente (ID=$CLIENT_ID) no figura en el inventario remoto."
+        return 1
+    fi
 
-    local remote_ip remote_host remote_mac
+    # Paso 2: comparar campos
+    local remote_ip remote_host remote_mac local_ip local_host local_mac
+
     remote_ip="$(jq -r --arg id "$CLIENT_ID" \
-        '.clients[] | select(.id==$id) | .ip' "$CLIENTS_FILE" 2>/dev/null || echo "")"
+        '.clients[] | select(.id==$id) | .ip'       "$CLIENTS_FILE" 2>/dev/null || echo "")"
     remote_host="$(jq -r --arg id "$CLIENT_ID" \
         '.clients[] | select(.id==$id) | .hostname' "$CLIENTS_FILE" 2>/dev/null || echo "")"
     remote_mac="$(jq -r --arg id "$CLIENT_ID" \
-        '.clients[] | select(.id==$id) | .mac' "$CLIENTS_FILE" 2>/dev/null || echo "")"
+        '.clients[] | select(.id==$id) | .mac'      "$CLIENTS_FILE" 2>/dev/null || echo "")"
 
-    [[ "$remote_ip"   == "$(get_ip)"       ]] &&
-    [[ "$remote_host" == "$(get_hostname)" ]] &&
-    [[ "$remote_mac"  == "$(get_mac)"      ]]
+    local_ip="$(get_ip)"
+    local_host="$(get_hostname)"
+    local_mac="$(get_mac)"
+
+    log "[SYNC] Comparando datos propios:"
+    log "[SYNC]   hostname : remoto='$remote_host' local='$local_host'"
+    log "[SYNC]   ip       : remoto='$remote_ip'   local='$local_ip'"
+    log "[SYNC]   mac      : remoto='$remote_mac'  local='$local_mac'"
+
+    local mismatch=0
+    [[ "$remote_ip"   != "$local_ip"   ]] && { log "[SYNC]   → IP discordante";       mismatch=1; }
+    [[ "$remote_host" != "$local_host" ]] && { log "[SYNC]   → hostname discordante"; mismatch=1; }
+    [[ "$remote_mac"  != "$local_mac"  ]] && { log "[SYNC]   → MAC discordante";      mismatch=1; }
+
+    [[ "$mismatch" -eq 0 ]] && log "[SYNC]   → Datos correctos en el inventario."
+    return "$mismatch"
 }
 
-# -------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Bucle principal
-# -------------------------------------------------------
+# ---------------------------------------------------------------------------
 while true; do
+
+    # Guardar marca de tiempo del inicio del ciclo para logs contextuales
+    cycle_start="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+    log "--- Ciclo iniciado: $cycle_start ---"
+
+    # Guardia: VAS_HOST debe estar definido en la configuración
     if [[ -z "$VAS_HOST" ]]; then
-        log "VAS_HOST no definido. Esperando ${RETRY_SECONDS}s."
+        log "VAS_HOST no definido en $CONF_FILE. Esperando ${RETRY_SECONDS}s."
         sleep "$RETRY_SECONDS"
         continue
     fi
 
-    # --- Heartbeat + registro (actualiza last_seen en VAS siempre) ---
+    # --- Paso 1: Heartbeat + registro ----------------------------------------
+    # Se envía en cada ciclo independientemente del estado de versión.
+    # VAS actualiza last_seen siempre; solo sube versión si los datos cambian.
+    # Esto mantiene el cliente activo frente al TTL de VAS.
     if ! register_client > /dev/null; then
         log "No se pudo contactar con VAS. Reintentando en ${RETRY_SECONDS}s."
         sleep "$RETRY_SECONDS"
         continue
     fi
 
-    # --- Comprobar versión ---
+    # --- Paso 2: Comparar versiones ------------------------------------------
     local_version="$(tr -d '[:space:]' < "$VERSION_FILE")"
+    log "[VERSION] Versión local: $local_version"
+
     remote_version_raw="$(get_remote_version)"
 
     if [[ -z "$remote_version_raw" ]]; then
-        log "[VERSION] No se pudo obtener la versión remota."
+        log "[VERSION] No se pudo obtener versión remota. Reintentando en ${RETRY_SECONDS}s."
         sleep "$RETRY_SECONDS"
         continue
     fi
 
+    # La versión debe ser numérica (YYYYMMDDHHMMSS). Rechazar valores malformados.
     if [[ ! "$remote_version_raw" =~ ^[0-9]+$ ]]; then
-        log "[VERSION] Versión remota inválida: '$remote_version_raw'."
+        log "[VERSION] Versión remota inválida: '$remote_version_raw'. Reintentando en ${RETRY_SECONDS}s."
         sleep "$RETRY_SECONDS"
         continue
     fi
 
     remote_version="$remote_version_raw"
+    log "[VERSION] Versión remota: $remote_version"
 
     if [[ "$remote_version" == "$local_version" ]]; then
+        log "[VERSION] Sin cambios. Próxima comprobación en ${CHECK_SECONDS}s."
         sleep "$CHECK_SECONDS"
         continue
     fi
 
-    log "[SYNC] Nueva versión: $local_version → $remote_version"
+    log "[SYNC] Nueva versión detectada: $local_version → $remote_version"
 
-    # --- Descargar el registro actualizado ---
+    # --- Paso 3: Descargar inventario actualizado ----------------------------
     if ! download_clients; then
+        log "[SYNC-ERROR] No se pudo descargar el inventario. Reintentando en ${RETRY_SECONDS}s."
         sleep "$RETRY_SECONDS"
         continue
     fi
 
-    # --- Comprobar si los propios datos están correctos en el registro ---
+    # --- Paso 4: Verificar datos propios en el inventario --------------------
     if client_data_matches; then
-        log "[SYNC] Datos propios correctos en el registro. Versión local → $remote_version"
+        # Los datos de este equipo están correctos en VAS.
+        # Aceptar la nueva versión y actualizar el estado local.
         echo "$remote_version" > "$VERSION_FILE"
+        log "[SYNC] Datos propios correctos. Versión local actualizada: $remote_version"
     else
-        log "[SYNC] Datos propios ausentes o discordantes. Enviando registro actualizado."
+        # Este equipo no figura o sus datos están desactualizados.
+        # Forzar re-registro para que VAS lo actualice y publique nueva versión.
+        log "[SYNC] Datos ausentes o discordantes. Enviando re-registro a VAS."
         if register_client > /dev/null; then
             echo "$remote_version" > "$VERSION_FILE"
-            log "[SYNC] Registro enviado. Versión local → $remote_version"
+            log "[SYNC] Re-registro enviado. Versión local: $remote_version"
         else
-            log "[SYNC-ERROR] No se pudo enviar el registro. Reintentando en ${RETRY_SECONDS}s."
+            log "[SYNC-ERROR] Re-registro fallido. Reintentando en ${RETRY_SECONDS}s."
             sleep "$RETRY_SECONDS"
             continue
         fi
     fi
 
+    log "--- Ciclo completado. Próxima comprobación en ${CHECK_SECONDS}s. ---"
     sleep "$CHECK_SECONDS"
 done
