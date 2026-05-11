@@ -1,3 +1,17 @@
+vx-dga-l-vac (0.4-1) unstable; urgency=medium
+
+  * Eliminada integración Veyon: conversión CSV y veyon-cli
+    se delegan a vx-dga-l-veyon-sync.
+  * Flujo reordenado: POST /register (heartbeat) precede a GET /version.
+  * Registro local del inventario en /var/lib/vac/clients.json.
+  * Parser seguro de configuración: sustituye source por grep+case.
+  * Timeouts en todas las llamadas curl (--max-time 10).
+  * get_mac filtra interfaces virtuales (solo eth/ens/enp/wlan/wlp).
+  * Descarga única del registro por ciclo (antes había doble GET).
+  * vac.conf simplificado: VAS_HOST, RETRY_SECONDS, CHECK_SECONDS.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Sun, 11 May 2026 12:30:00 +0200
+
 vx-dga-l-vac (0.3-1) unstable; urgency=medium
 
   * Overhaul mayor sobre logging para depuración de errores
