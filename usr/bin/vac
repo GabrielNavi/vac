@@ -73,9 +73,10 @@ get_ip() {
 
 # Devuelve la primera MAC de una interfaz física (eth, ens, enp, wlan, wlp).
 # Excluye loopback, bridges, veth y otras interfaces virtuales.
+# Usa ip link show sin -o: la salida multilínea permite el patrón de dos fases.
 get_mac() {
-    ip -o link show 2>/dev/null \
-        | awk '/^[0-9]+: (eth|ens|enp|wlan|wlp)/ { iface=1 }
+    ip link show 2>/dev/null \
+        | awk '/^[0-9]+: (eth|ens|enp|wlan|wlp)/ { iface=1; next }
                iface && /link\/ether/ { print $2; exit }
                /^[0-9]+:/ { iface=0 }' \
         || true
@@ -148,29 +149,21 @@ download_clients() {
 client_data_matches() {
     [[ -f "$CLIENTS_FILE" ]] || return 1
 
+    # Primero verificar que el cliente existe en el registro.
+    jq -e --arg id "$CLIENT_ID" \
+        '.clients[]? | select(.id==$id)' "$CLIENTS_FILE" >/dev/null 2>&1 || return 1
+
     local remote_ip remote_host remote_mac
     remote_ip="$(jq -r --arg id "$CLIENT_ID" \
-        '.clients[]? | select(.id==$id) | .ip // ""' "$CLIENTS_FILE" 2>/dev/null || echo "")"
-
-    # Si el cliente no figura en el registro, no coincide.
-    [[ -z "$remote_ip" && "$remote_ip" == "" ]] && {
-        jq -e --arg id "$CLIENT_ID" '.clients[]? | select(.id==$id)' \
-            "$CLIENTS_FILE" >/dev/null 2>&1 || return 1
-    }
-
+        '.clients[] | select(.id==$id) | .ip' "$CLIENTS_FILE" 2>/dev/null || echo "")"
     remote_host="$(jq -r --arg id "$CLIENT_ID" \
-        '.clients[]? | select(.id==$id) | .hostname // ""' "$CLIENTS_FILE" 2>/dev/null || echo "")"
+        '.clients[] | select(.id==$id) | .hostname' "$CLIENTS_FILE" 2>/dev/null || echo "")"
     remote_mac="$(jq -r --arg id "$CLIENT_ID" \
-        '.clients[]? | select(.id==$id) | .mac // ""' "$CLIENTS_FILE" 2>/dev/null || echo "")"
+        '.clients[] | select(.id==$id) | .mac' "$CLIENTS_FILE" 2>/dev/null || echo "")"
 
-    local local_ip local_host local_mac
-    local_ip="$(get_ip)"
-    local_host="$(get_hostname)"
-    local_mac="$(get_mac)"
-
-    [[ "$remote_ip"   == "$local_ip"   ]] &&
-    [[ "$remote_host" == "$local_host" ]] &&
-    [[ "$remote_mac"  == "$local_mac"  ]]
+    [[ "$remote_ip"   == "$(get_ip)"       ]] &&
+    [[ "$remote_host" == "$(get_hostname)" ]] &&
+    [[ "$remote_mac"  == "$(get_mac)"      ]]
 }
 
 # -------------------------------------------------------

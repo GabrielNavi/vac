@@ -1,3 +1,15 @@
+vx-dga-l-vac (0.4-2) unstable; urgency=medium
+
+  * Corregido get_mac: eliminado flag -o de ip link show. Con salida
+    monolínea el patrón awk de dos fases devolvía el nombre de interfaz
+    en lugar de la MAC. La salida multilínea estándar funciona correctamente.
+  * Corregido client_data_matches: eliminada condición redundante
+    (-z "$remote_ip" && "$remote_ip" == "") que podía enmascarar clientes
+    ausentes del registro. Ahora comprueba existencia del ID explícitamente
+    antes de comparar campos.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Sun, 11 May 2026 14:00:00 +0200
+
 vx-dga-l-vac (0.4-1) unstable; urgency=medium
 
   * Eliminada integración Veyon: conversión CSV y veyon-cli
