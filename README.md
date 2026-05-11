@@ -1,108 +1,113 @@
-# vx-dga-l-vac
+# vx-dga-l-vac — Vitalinux Autoregistration Client
 
-Paquete Debian para Vitalinux que instala Vitalinux Autoregistration Client (VAC) de forma global.
+Paquete Debian para Vitalinux que instala el cliente de autoregistro de red (VAC).
 
-## Descripcion
+## Descripción
 
-Este paquete instala VAC en el sistema para su despliegue mediante Migasfree en entornos Vitalinux. VAC se ejecuta como servicio systemd en bucle, registra el equipo en VAS, consulta cambios de versión de configuración y aplica automáticamente la configuración de Veyon.
+VAC registra el equipo en VAS usando un UUID persistente como identidad estable, y mantiene una copia local del inventario de red en `/var/lib/vac/clients.json`. Funciona como servicio systemd en bucle continuo.
+
+No tiene dependencia de Veyon. Si el equipo tiene Veyon instalado, la sincronización de networkobjects se gestiona mediante el paquete opcional `vx-dga-l-veyon-sync`.
+
+## Ecosistema
+
+```
+vx-dga-l-vas          → registro canónico (servidor)
+vx-dga-l-vac          → cliente de autoregistro (este paquete)
+vx-dga-l-veyon-sync   → integración Veyon opcional
+```
 
 ## Requisitos
 
-- Sistema Vitalinux compatible con paquetes Debian.
-- Dependencias de sistema en tiempo de ejecución:
-  - bash
-  - curl
-  - jq
-  - uuid-runtime
-  - iproute2
-  - veyon
-- Conectividad de red con el servidor VAS.
+- `bash`, `curl`, `jq`, `uuid-runtime`, `iproute2`
+- Conectividad de red con el servidor VAS
 
-## Informacion del Paquete
+## Información del paquete
 
-- Nombre: vx-dga-l-vac
-- Version: 0.2-3
+- Nombre: `vx-dga-l-vac`
+- Versión: 0.4-2
 - Arquitectura: all
-- Mantenedor: Gabriel Navia <correos@gabrielnav.es>
+- Mantenedor: Gabriel Navia \<correos@gabrielnav.es\>
 - Licencia: GPL-3.0+
 
-## Archivos incluidos
+## Archivos instalados
 
-- usr/bin/vac - Script principal del cliente en Bash
-- etc/vac/vac.conf - Configuración editable del cliente
-- lib/systemd/system/vac.service - Unidad systemd de VAC
-- debian/postinst - Inicialización de ID persistente y arranque del servicio
-- debian/prerm - Parada y deshabilitación del servicio al eliminar
-- debian/postrm - Limpieza de estado en purge
+| Ruta | Descripción |
+|---|---|
+| `usr/bin/vac` | Script Bash principal del cliente |
+| `etc/vac/vac.conf` | Configuración editable |
+| `lib/systemd/system/vac.service` | Unidad systemd |
 
-## Funcionamiento de VAC
+## Estado local
 
-VAC implementa el flujo de autoregistro y sincronización continua:
+| Ruta | Descripción |
+|---|---|
+| `/etc/vac/vac-id` | UUID persistente del equipo (600, generado una sola vez) |
+| `/var/lib/vac/version` | Última versión del registro recibida de VAS |
+| `/var/lib/vac/clients.json` | Copia local del inventario completo |
 
-1. Arranque
-   - systemd ejecuta usr/bin/vac.
-   - Carga configuración desde etc/vac/vac.conf.
-   - Inicializa estado local en /var/lib/vac.
-   - Genera UUID persistente en /etc/vac/vac-id si no existe.
+## Flujo de operación
 
-2. Registro en VAS
-   - Obtiene hostname, IP y MAC del equipo.
-   - Envía datos al endpoint POST /register del servidor VAS.
-   - Usa el UUID persistente como identificador principal.
+Cada ciclo del bucle principal:
 
-3. Control de versión
-   - Consulta GET /version en VAS.
-   - Compara versión remota con la versión local almacenada.
+```
+1. POST /register  (heartbeat + datos actuales)
+      VAS actualiza last_seen siempre.
+      VAS sube versión solo si hostname/IP/MAC han cambiado.
+      → fallo: sleep RETRY_SECONDS, reintentar
 
-4. Descarga y aplicación de configuración
-   - Si la versión cambia, descarga GET /config.
-   - Guarda el JSON en VEYON_CONFIG.
-    - Convierte computers.json a CSV para compatibilidad con Veyon CLI.
-   - Ejecuta importación con:
-       - veyon-cli networkobjects remove <LOCATION_GESTIONADA>
-       - veyon-cli networkobjects import <CSV> format "%type%;%name%;%host%;%mac%;%location%"
+2. GET /version
+      → igual que versión local: sleep CHECK_SECONDS, siguiente ciclo
+      → diferente: continuar
 
-5. Reintentos
-   - Si falla registro, versión o aplicación, VAC no avanza versión local y reintenta según la temporización configurada.
+3. GET /clients  → guardar en /var/lib/vac/clients.json
+
+4. Comprobar si los propios datos están en el registro y son correctos
+      → coinciden:     actualizar /var/lib/vac/version
+      → no coinciden:  POST /register de nuevo, actualizar versión
+                        (ocurre si otro proceso limpió el registro)
+
+5. sleep CHECK_SECONDS
+```
+
+### Mecanismo TTL
+
+El `POST /register` del paso 1 actualiza `last_seen` en VAS en cada ciclo, aunque los datos no hayan cambiado. Esto mantiene al equipo activo frente a la limpieza automática por TTL de VAS. La relación de seguridad es `CHECK_SECONDS << CLIENT_TTL_DAYS × 86400`.
+
+## Configuración
+
+Fichero principal: `/etc/vac/vac.conf`  
+Overlays (orden lexical): `/etc/vac/vac.conf.d/*.conf`
+
+El parser no ejecuta código del fichero de configuración.
+
+| Variable | Defecto | Descripción |
+|---|---|---|
+| `VAS_HOST` | — | URL base del servidor VAS (sin barra final). **Obligatorio.** |
+| `RETRY_SECONDS` | `60` | Espera entre reintentos ante fallo de red |
+| `CHECK_SECONDS` | `300` | Intervalo de comprobación de versión |
+
+Ejemplo:
+
+```bash
+VAS_HOST="http://10.0.0.1:8000"
+RETRY_SECONDS=60
+CHECK_SECONDS=300
+```
+
+## Integración con Veyon
+
+VAC no interactúa con Veyon directamente. Si el equipo tiene Veyon instalado y se quiere sincronizar los networkobjects localmente, instalar `vx-dga-l-veyon-sync` con `SOURCE=vac`. Este leerá `/var/lib/vac/clients.json` y `/var/lib/vac/version` para detectar cambios y aplicarlos a Veyon sin añadir carga extra a la red.
 
 ## Servicio systemd
 
-- Nombre del servicio: vac.service
-- Comandos de operación habituales:
-  - sudo systemctl status vac
-  - sudo systemctl restart vac
-  - sudo journalctl -u vac -f
+```bash
+systemctl status vac
+systemctl restart vac
+journalctl -u vac -f
+```
 
-## Configuracion
+## Construcción del paquete
 
-Archivo de configuración: etc/vac/vac.conf
-
-Sobreescrituras por subconfiguración: /etc/vac/vac.conf.d/*.conf
-
-El orden de carga es:
-1. /etc/vac/vac.conf
-2. /etc/vac/vac.conf.d/*.conf (orden lexical)
-
-Variables principales:
-
-- VAS_HOST: URL base del servidor (ejemplo: http://192.168.1.149:8000)
-- RETRY_SECONDS: espera entre reintentos cuando hay fallo
-- CHECK_SECONDS: intervalo de comprobación de versión
-- VEYON_CONFIG: ruta local del archivo JSON descargado
-- VEYON_ROOM: location de destino para importación en Veyon
-- CONFIG_ENDPOINT: endpoint remoto de configuración (normalmente /config)
-
-Ejemplo típico:
-
-VAS_HOST="http://192.168.1.149:8000"
-RETRY_SECONDS=60
-CHECK_SECONDS=300
-VEYON_CONFIG="/etc/veyon/computers.json"
-VEYON_ROOM="Autoregistrados"
-CONFIG_ENDPOINT="/config"
-
-## Construccion del paquete
-
-Desde este directorio:
-
+```bash
 dpkg-buildpackage -us -uc -b
+```
