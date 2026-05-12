@@ -1,3 +1,18 @@
+vx-dga-l-vac (0.5-1) unstable; urgency=medium
+
+  * Soporte de campos extra extensibles via scripts externos:
+    - EXTRA_IMPERATIVE_SCRIPT: script cuyo JSON dispara bump_version en VAS si cambia.
+    - EXTRA_INFORMATIVE_SCRIPT: script cuyo JSON es puramente informativo (no sube versión).
+  * run_extra_script(): ejecuta el script, valida y normaliza la salida JSON
+    (jq sort_by(.key)) para comparación determinista. Omite el campo (null)
+    si el script falla, supera 10 s de timeout o produce JSON inválido.
+  * register_client(): incluye extra_imperative y extra_informative en el payload
+    JSON solo cuando los scripts producen salida válida.
+  * vac.conf: añadidas variables EXTRA_IMPERATIVE_SCRIPT y EXTRA_INFORMATIVE_SCRIPT
+    comentadas con ejemplos de uso.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Tue, 12 May 2026 17:00:00 +0200
+
 vx-dga-l-vac (0.4-5) unstable; urgency=medium
 
   * client_data_matches() reescrito para usar GET /clients/{UUID} en lugar

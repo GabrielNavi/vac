@@ -29,6 +29,8 @@ TMP_CLIENTS="${STATE_DIR}/clients.json.tmp"
 VAS_HOST=""
 RETRY_SECONDS=60
 CHECK_SECONDS=300
+EXTRA_IMPERATIVE_SCRIPT=""
+EXTRA_INFORMATIVE_SCRIPT=""
 
 # ---------------------------------------------------------------------------
 # Carga de configuración
@@ -47,9 +49,11 @@ load_conf() {
         [ -z "$key" ] && continue
 
         case "$key" in
-            VAS_HOST)        VAS_HOST="$val";        (( ++loaded )) ;;
-            RETRY_SECONDS)   RETRY_SECONDS="$val";   (( ++loaded )) ;;
-            CHECK_SECONDS)   CHECK_SECONDS="$val";   (( ++loaded )) ;;
+            VAS_HOST)                 VAS_HOST="$val";                 (( ++loaded )) ;;
+            RETRY_SECONDS)            RETRY_SECONDS="$val";            (( ++loaded )) ;;
+            CHECK_SECONDS)            CHECK_SECONDS="$val";            (( ++loaded )) ;;
+            EXTRA_IMPERATIVE_SCRIPT)  EXTRA_IMPERATIVE_SCRIPT="$val";  (( ++loaded )) ;;
+            EXTRA_INFORMATIVE_SCRIPT) EXTRA_INFORMATIVE_SCRIPT="$val"; (( ++loaded )) ;;
         esac
     done < <(grep -v '^\s*#' "$file" | grep '=' || true)
 
@@ -127,6 +131,35 @@ get_mac() {
         || true
 }
 
+# Ejecuta el script indicado por $1 y devuelve su salida JSON normalizada
+# (claves ordenadas para comparación determinista en VAS).
+# Devuelve cadena vacía y exit 0 si el script no está configurado, falla,
+# o produce JSON inválido — el campo se omite del payload sin interrumpir el ciclo.
+run_extra_script() {
+    local script="$1"
+    [[ -z "$script" ]] && return 0
+
+    if [[ ! -x "$script" ]]; then
+        log "[EXTRA] Script no ejecutable: $script — omitiendo campo."
+        return 0
+    fi
+
+    local output
+    output="$(timeout 10 "$script" 2>/dev/null)" || {
+        log "[EXTRA] Script falló o superó timeout (10s): $script — omitiendo campo."
+        return 0
+    }
+
+    # Normalizar claves del JSON para comparación determinista en VAS
+    local normalized
+    normalized="$(echo "$output" | jq -c 'to_entries | sort_by(.key) | from_entries' 2>/dev/null)" || {
+        log "[EXTRA] Salida de $script no es JSON válido — omitiendo campo."
+        return 0
+    }
+
+    echo "$normalized"
+}
+
 # ---------------------------------------------------------------------------
 # Funciones principales del cliente
 # ---------------------------------------------------------------------------
@@ -136,7 +169,7 @@ get_mac() {
 # siempre) y como registro inicial o de actualización.
 # Imprime la respuesta JSON del servidor y devuelve 0 si tuvo éxito.
 register_client() {
-    local host ip mac payload response
+    local host ip mac extra_imp extra_inf payload response
 
     host="$(get_hostname)"
     ip="$(get_ip)"
@@ -155,12 +188,26 @@ register_client() {
 
     [[ -z "$mac" ]] && log "[REGISTER] MAC vacía (interfaz virtual o sin detección). Registrando sin MAC."
 
+    # Recoger campos extra de scripts externos (vacío = omitir del payload)
+    extra_imp="$(run_extra_script "$EXTRA_IMPERATIVE_SCRIPT")"
+    extra_inf="$(run_extra_script "$EXTRA_INFORMATIVE_SCRIPT")"
+
+    # Construir payload incluyendo los extras solo si existen
     payload="$(jq -n \
-        --arg id       "$CLIENT_ID" \
-        --arg hostname "$host"      \
-        --arg ip       "$ip"        \
-        --arg mac      "$mac"       \
-        '{id:$id, hostname:$hostname, ip:$ip, mac:$mac}')"
+        --arg  id       "$CLIENT_ID" \
+        --arg  hostname "$host"      \
+        --arg  ip       "$ip"        \
+        --arg  mac      "$mac"       \
+        --argjson extra_imp "${extra_imp:-null}" \
+        --argjson extra_inf "${extra_inf:-null}" \
+        '{
+            id:       $id,
+            hostname: $hostname,
+            ip:       $ip,
+            mac:      $mac,
+            extra_imperative:  (if $extra_imp  != null then $extra_imp  else null end),
+            extra_informative: (if $extra_inf != null then $extra_inf else null end)
+        }')"
 
     log "[REGISTER] Enviando POST ${VAS_HOST%/}/register ..."
 
