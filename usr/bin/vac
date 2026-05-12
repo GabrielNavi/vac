@@ -47,9 +47,9 @@ load_conf() {
         [ -z "$key" ] && continue
 
         case "$key" in
-            VAS_HOST)        VAS_HOST="$val";        (( loaded++ )) ;;
-            RETRY_SECONDS)   RETRY_SECONDS="$val";   (( loaded++ )) ;;
-            CHECK_SECONDS)   CHECK_SECONDS="$val";   (( loaded++ )) ;;
+            VAS_HOST)        VAS_HOST="$val";        (( ++loaded )) ;;
+            RETRY_SECONDS)   RETRY_SECONDS="$val";   (( ++loaded )) ;;
+            CHECK_SECONDS)   CHECK_SECONDS="$val";   (( ++loaded )) ;;
         esac
     done < <(grep -v '^\s*#' "$file" | grep '=' || true)
 

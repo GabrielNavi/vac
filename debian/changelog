@@ -1,3 +1,12 @@
+vx-dga-l-vac (0.4-4) unstable; urgency=medium
+
+  * Corregido crash al arrancar: (( loaded++ )) con loaded=0 evalúa (( 0 ))
+    que devuelve exit code 1 bajo set -e, matando el proceso inmediatamente
+    al leer la primera clave de configuración. Cambiado a (( ++loaded ))
+    (pre-incremento, evalúa al nuevo valor ≥1, siempre verdad).
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Tue, 12 May 2026 10:30:00 +0200
+
 vx-dga-l-vac (0.4-3) unstable; urgency=low
 
   * Añadidos comentarios de sección y de función en usr/bin/vac.
