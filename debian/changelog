@@ -1,3 +1,12 @@
+vx-dga-l-vac (0.4-5) unstable; urgency=medium
+
+  * client_data_matches() reescrito para usar GET /clients/{UUID} en lugar
+    de buscar el UUID en el JSON local de /clients. El UUID actúa como
+    credencial implícita: solo quien lo conoce puede consultar sus propios
+    datos. Compatible con la eliminación del UUID del listado público de VAS.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Tue, 12 May 2026 14:00:00 +0200
+
 vx-dga-l-vac (0.4-4) unstable; urgency=medium
 
   * Corregido crash al arrancar: (( loaded++ )) con loaded=0 evalúa (( 0 ))

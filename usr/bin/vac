@@ -210,31 +210,31 @@ download_clients() {
     fi
 }
 
-# Comprueba si los datos de este cliente en el inventario remoto coinciden
-# con los valores actuales del equipo (hostname, IP, MAC).
-# Devuelve 0 (éxito/coincide) o 1 (ausente o discordante).
+# Comprueba si los datos de este cliente en VAS coinciden con los valores
+# actuales del equipo (hostname, IP, MAC).
+# Usa GET /clients/{CLIENT_ID} directamente: el UUID actúa como credencial
+# implícita — solo quien lo conoce puede consultar sus propios datos.
+# El UUID no aparece en GET /clients (listado público), por diseño.
+# Devuelve 0 (coincide) o 1 (ausente o discordante).
 client_data_matches() {
-    [[ -f "$CLIENTS_FILE" ]] || {
-        log "[SYNC] clients.json no existe aún. Asumiendo discordancia."
-        return 1
-    }
+    local response
 
-    # Paso 1: comprobar si este UUID figura en el inventario
-    if ! jq -e --arg id "$CLIENT_ID" \
-        '.clients[]? | select(.id==$id)' "$CLIENTS_FILE" >/dev/null 2>&1; then
-        log "[SYNC] Este cliente (ID=$CLIENT_ID) no figura en el inventario remoto."
+    log "[SYNC] Consultando datos propios en VAS: ${VAS_HOST%/}/clients/${CLIENT_ID}"
+
+    # curl -f devuelve vacío y exit≠0 en 4xx/5xx → cliente no registrado → return 1
+    response="$(curl -fsS --max-time 10 --connect-timeout 5 \
+        "${VAS_HOST%/}/clients/${CLIENT_ID}" 2>/dev/null)" || response=""
+
+    if [[ -z "$response" ]]; then
+        log "[SYNC] Cliente no encontrado en VAS (404 o error de red). Asumiendo discordancia."
         return 1
     fi
 
-    # Paso 2: comparar campos
     local remote_ip remote_host remote_mac local_ip local_host local_mac
 
-    remote_ip="$(jq -r --arg id "$CLIENT_ID" \
-        '.clients[] | select(.id==$id) | .ip'       "$CLIENTS_FILE" 2>/dev/null || echo "")"
-    remote_host="$(jq -r --arg id "$CLIENT_ID" \
-        '.clients[] | select(.id==$id) | .hostname' "$CLIENTS_FILE" 2>/dev/null || echo "")"
-    remote_mac="$(jq -r --arg id "$CLIENT_ID" \
-        '.clients[] | select(.id==$id) | .mac'      "$CLIENTS_FILE" 2>/dev/null || echo "")"
+    remote_ip="$(echo   "$response" | jq -r '.ip'       2>/dev/null || echo "")"
+    remote_host="$(echo "$response" | jq -r '.hostname' 2>/dev/null || echo "")"
+    remote_mac="$(echo  "$response" | jq -r '.mac'      2>/dev/null || echo "")"
 
     local_ip="$(get_ip)"
     local_host="$(get_hostname)"
