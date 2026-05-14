@@ -1,0 +1,206 @@
+#!/bin/bash
+# vac-register — Registro puntual en VAS.
+#
+# Script de uso único que registra o actualiza este equipo en VAS.
+# Diseñado para ser invocado desde systemd timers, scripts de administración,
+# o procesos productores de datos extra (LDAP, CUPS, hardware, ...).
+#
+# Uso:
+#   vac-register [--imperative <archivo|->] [--informative <archivo|->]
+#
+# --imperative  <archivo|-> : JSON para extra_imperative (- = stdin).
+# --informative <archivo|-> : JSON para extra_informative (- = stdin).
+#
+# Sin argumentos: extras enviados como null (COALESCE en VAS).
+# EXTRAS_ENABLED=false: ambos campos → {} (borrado explícito en VAS).
+#
+# Flujo:
+#   1. Selfcheck contra identity.json: hostname/IP/MAC y extras recibidos.
+#      Sin cambios → salida 0 sin registrar (idempotente).
+#   2. Con cambios o sin identity.json → POST /register.
+#      Escribe identity.json, VERSION_FILE y (SYNC_CLIENTS=true) clients.json.
+
+set -euo pipefail
+
+LOG_TAG="[VAC-REGISTER]"
+source /usr/lib/vac/vac-common.sh
+
+# ---------------------------------------------------------------------------
+# Argumentos
+# ---------------------------------------------------------------------------
+EXTRA_IMP_ARG=""
+EXTRA_INF_ARG=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --imperative)
+            [[ -z "${2:-}" ]] && { log "Error: --imperative requiere un argumento."; exit 1; }
+            EXTRA_IMP_ARG="$2"
+            shift 2
+            ;;
+        --informative)
+            [[ -z "${2:-}" ]] && { log "Error: --informative requiere un argumento."; exit 1; }
+            EXTRA_INF_ARG="$2"
+            shift 2
+            ;;
+        *)
+            log "Argumento desconocido: $1"
+            exit 1
+            ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
+# Inicialización
+# ---------------------------------------------------------------------------
+load_all_conf
+
+mkdir -p "$STATE_DIR"
+
+if [[ ! -f "$ID_FILE" ]]; then
+    uuidgen > "$ID_FILE"
+    chmod 600 "$ID_FILE"
+    log "UUID generado: $(cat "$ID_FILE")"
+fi
+
+if [[ ! -f "$VERSION_FILE" ]]; then
+    echo "0" > "$VERSION_FILE"
+fi
+
+CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
+
+log "=== vac-register iniciado ==="
+log "UUID:           $CLIENT_ID"
+log "VAS_HOST:       ${VAS_HOST:-'(no definido)'}"
+log "EXTRAS_ENABLED: $EXTRAS_ENABLED"
+log "SYNC_CLIENTS:   $SYNC_CLIENTS"
+
+if [[ -z "$VAS_HOST" ]]; then
+    log "VAS_HOST no definido en $CONF_FILE. Abortando."
+    exit 1
+fi
+
+if [[ "$EXTRA_IMP_ARG" == "-" && "$EXTRA_INF_ARG" == "-" ]]; then
+    log "Error: stdin (-) no puede usarse para --imperative y --informative a la vez."
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# read_extra_json: lee JSON desde archivo o stdin, normaliza y valida.
+# Devuelve "" y exit 0 ante cualquier error (campo omitido → COALESCE en VAS).
+# ---------------------------------------------------------------------------
+read_extra_json() {
+    local src="$1" label="$2"
+    [[ -z "$src" ]] && return 0
+
+    local raw
+    if [[ "$src" == "-" ]]; then
+        raw="$(cat)"
+    elif [[ -f "$src" ]]; then
+        raw="$(cat "$src")"
+    else
+        log "[$label] Archivo no encontrado: $src — omitiendo campo."
+        return 0
+    fi
+
+    if [[ -z "$raw" ]]; then
+        log "[$label] Entrada vacía — omitiendo campo."
+        return 0
+    fi
+
+    local normalized
+    normalized="$(echo "$raw" | jq -c 'to_entries | sort_by(.key) | from_entries' 2>/dev/null)" || {
+        log "[$label] JSON inválido — omitiendo campo."
+        return 0
+    }
+
+    local keys
+    keys="$(echo "$normalized" | jq 'keys | length' 2>/dev/null || echo '?')"
+    log "[$label] JSON leído: $keys clave(s)."
+    echo "$normalized"
+}
+
+# ---------------------------------------------------------------------------
+# Preparar extras según política de configuración
+# ---------------------------------------------------------------------------
+if [[ "$EXTRAS_ENABLED" != "true" ]]; then
+    # EXTRAS_ENABLED=false: forzar borrado explícito independientemente de los args.
+    # Garantiza que VAS ponga ambos campos a NULL aunque tuvieran valores previos.
+    EXTRA_IMP="{}"
+    EXTRA_INF="{}"
+    log "[EXTRA] EXTRAS_ENABLED=false → {} en ambos campos (borrado explícito en VAS)."
+else
+    EXTRA_IMP="$(read_extra_json "$EXTRA_IMP_ARG" "IMP")"
+    EXTRA_INF="$(read_extra_json "$EXTRA_INF_ARG" "INF")"
+    log_debug "[EXTRA] IMP: ${EXTRA_IMP:-(null/COALESCE)}  INF: ${EXTRA_INF:-(null/COALESCE)}"
+fi
+
+# ---------------------------------------------------------------------------
+# Recopilar datos del equipo
+# ---------------------------------------------------------------------------
+LOC_HOST="$(get_hostname)"
+LOC_IP="$(get_ip)"
+LOC_MAC="$(get_mac)"
+
+log_debug "[SELFCHECK] Datos del equipo: hostname=$LOC_HOST ip=${LOC_IP:-(vacía)} mac=${LOC_MAC:-(vacía)}"
+
+# ---------------------------------------------------------------------------
+# Selfcheck: comparar con identity.json para evitar registros redundantes.
+# ---------------------------------------------------------------------------
+if load_identity; then
+    mismatch=0
+    [[ "$LOC_HOST" != "$IDENTITY_HOST" ]] && { log "[SELFCHECK] hostname: '$IDENTITY_HOST' → '$LOC_HOST'"; mismatch=1; }
+    [[ "$LOC_IP"   != "$IDENTITY_IP"   ]] && { log "[SELFCHECK] IP: '$IDENTITY_IP' → '$LOC_IP'";           mismatch=1; }
+    [[ "$LOC_MAC"  != "$IDENTITY_MAC"  ]] && { log "[SELFCHECK] MAC: '$IDENTITY_MAC' → '$LOC_MAC'";        mismatch=1; }
+
+    if [[ "$EXTRAS_ENABLED" == "true" ]]; then
+        # Comparar solo si se recibió argumento (EXTRA_IMP!="").
+        # Sin argumento → null/COALESCE; no forzar registro.
+        if [[ -n "$EXTRA_IMP" && "$EXTRA_IMP" != "$IDENTITY_IMP" ]]; then
+            log "[SELFCHECK] extra_imperative cambió."
+            mismatch=1
+        fi
+        if [[ -n "$EXTRA_INF" && "$EXTRA_INF" != "$IDENTITY_INF" ]]; then
+            log "[SELFCHECK] extra_informative cambió."
+            mismatch=1
+        fi
+    fi
+
+    if [[ "$mismatch" == "0" ]]; then
+        log "[SELFCHECK] Sin cambios detectados. Registro omitido."
+        exit 0
+    fi
+else
+    log "[SELFCHECK] Sin identity.json — forzando registro inicial."
+fi
+
+# ---------------------------------------------------------------------------
+# Registro
+# ---------------------------------------------------------------------------
+log "[REGISTER] Enviando registro a VAS..."
+
+if ! register_client "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" > /dev/null; then
+    log "[REGISTER] Fallo al contactar con VAS. Abortando."
+    exit 1
+fi
+
+save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF"
+log "[REGISTER] Completado. identity.json actualizado."
+
+# ---------------------------------------------------------------------------
+# Actualizar versión local y sincronizar inventario
+# ---------------------------------------------------------------------------
+remote_ver="$(curl -fsS --max-time 10 --connect-timeout 5 \
+    "${VAS_HOST%/}/version" 2>/dev/null \
+    | jq -r '.version' 2>/dev/null || echo "")"
+
+if [[ -n "$remote_ver" && "$remote_ver" =~ ^[0-9]+$ ]]; then
+    echo "$remote_ver" > "$VERSION_FILE"
+    log "[VERSION] Versión local actualizada: $remote_ver"
+fi
+
+if [[ "$SYNC_CLIENTS" == "true" ]]; then
+    download_clients || log "[SYNC-ERROR] No se pudo descargar el inventario. Continuando."
+fi
+
+log "=== vac-register completado ==="

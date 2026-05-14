@@ -4,137 +4,71 @@
 # Servicio systemd que registra este equipo en VAS y mantiene una copia
 # local del inventario de red en /var/lib/vac/clients.json.
 #
-# Flujo de cada ciclo:
-#   1. POST /register  → heartbeat + datos actuales (actualiza last_seen en VAS)
-#   2. GET /version    → comparar con versión local
-#   3. Si difiere: GET /clients → guardar local → comprobar datos propios
-#      3a. Datos correctos: actualizar versión local
-#      3b. Datos ausentes/discordantes: POST /register de nuevo
+# Flujo:
+#   Arranque: espera a VAS_HOST, registro inicial bloqueante, identity.json.
+#
+#   Cada ciclo:
+#     1. Recopila hostname/IP/MAC y extras (según EXTRAS_ENABLED y EXEC_*).
+#     2. Selfcheck local: compara con identity.json.
+#        - Sin cambios → POST /heartbeat (ligero, solo last_seen).
+#          Si 404 o error de red → POST /register (re-registro).
+#        - Con cambios → POST /register; guarda identity.json.
+#     3. GET /version → compara con versión local.
+#     4. Si nueva versión:
+#        - Si SYNC_CLIENTS=true: GET /clients → clients.json.
+#        - GET /clients/{UUID} → identity.json (reflejo desde VAS).
+#        - Actualizar versión local.
 #
 # Journalctl: journalctl -u vac -f
 
 set -euo pipefail
 
-# ---------------------------------------------------------------------------
-# Rutas y valores por defecto
-# ---------------------------------------------------------------------------
-CONF_FILE="/etc/vac/vac.conf"
-CONF_DIR="/etc/vac/vac.conf.d"
-ID_FILE="/etc/vac/vac-id"
-STATE_DIR="/var/lib/vac"
-VERSION_FILE="${STATE_DIR}/version"
-CLIENTS_FILE="${STATE_DIR}/clients.json"
-TMP_CLIENTS="${STATE_DIR}/clients.json.tmp"
-
-VAS_HOST=""
-RETRY_SECONDS=60
-CHECK_SECONDS=300
-EXTRA_IMPERATIVE_SCRIPT=""
-EXTRA_INFORMATIVE_SCRIPT=""
+LOG_TAG="[VAC]"
+source /usr/lib/vac/vac-common.sh
 
 # ---------------------------------------------------------------------------
-# Carga de configuración
+# Inicialización
 # ---------------------------------------------------------------------------
+load_all_conf
 
-# Parser seguro: lee clave=valor sin ejecutar código del fichero.
-# Solo acepta las variables conocidas; el resto se ignora.
-load_conf() {
-    local file="$1"
-    [ -f "$file" ] || return 0
-
-    local loaded=0
-    while IFS='=' read -r key val; do
-        key="$(echo "$key" | xargs 2>/dev/null || true)"
-        val="$(echo "$val" | xargs 2>/dev/null | sed 's/^"//; s/"$//' || true)"
-        [ -z "$key" ] && continue
-
-        case "$key" in
-            VAS_HOST)                 VAS_HOST="$val";                 (( ++loaded )) ;;
-            RETRY_SECONDS)            RETRY_SECONDS="$val";            (( ++loaded )) ;;
-            CHECK_SECONDS)            CHECK_SECONDS="$val";            (( ++loaded )) ;;
-            EXTRA_IMPERATIVE_SCRIPT)  EXTRA_IMPERATIVE_SCRIPT="$val";  (( ++loaded )) ;;
-            EXTRA_INFORMATIVE_SCRIPT) EXTRA_INFORMATIVE_SCRIPT="$val"; (( ++loaded )) ;;
-        esac
-    done < <(grep -v '^\s*#' "$file" | grep '=' || true)
-
-    echo "[VAC] Config cargada desde $file: $loaded clave(s)"
-}
-
-load_conf "$CONF_FILE"
-
-if [[ -d "$CONF_DIR" ]]; then
-    for cfg in "$CONF_DIR"/*.conf; do
-        [[ -f "$cfg" ]] || continue
-        load_conf "$cfg"
-    done
-fi
-
-# ---------------------------------------------------------------------------
-# Inicialización del estado local
-# ---------------------------------------------------------------------------
 mkdir -p "$STATE_DIR"
 
-# Generar UUID persistente si no existe (también lo hace postinst)
 if [[ ! -f "$ID_FILE" ]]; then
     uuidgen > "$ID_FILE"
     chmod 600 "$ID_FILE"
-    echo "[VAC] UUID generado: $(cat "$ID_FILE")"
+    log "UUID generado: $(cat "$ID_FILE")"
 fi
 
-# Inicializar fichero de versión local
 if [[ ! -f "$VERSION_FILE" ]]; then
     echo "0" > "$VERSION_FILE"
-    echo "[VAC] Fichero de versión inicializado: $VERSION_FILE → 0"
+    log "Fichero de versión inicializado: $VERSION_FILE → 0"
 fi
 
 CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
 
-# ---------------------------------------------------------------------------
-# Funciones de logging y red
-# ---------------------------------------------------------------------------
-
-# Prefijo [VAC] en todos los mensajes para facilitar filtrado en journalctl:
-#   journalctl -u vac -f | grep "\[VAC-SYNC\]"
-log() {
-    echo "[VAC] $*"
-}
-
 log "=== Iniciando VAC ==="
-log "UUID:        $CLIENT_ID"
-log "VAS_HOST:    ${VAS_HOST:-'(no definido)'}"
-log "CHECK:       ${CHECK_SECONDS}s"
-log "RETRY:       ${RETRY_SECONDS}s"
-log "STATE_DIR:   $STATE_DIR"
+log "UUID:           $CLIENT_ID"
+log "VAS_HOST:       ${VAS_HOST:-'(no definido)'}"
+log "CHECK:          ${CHECK_SECONDS}s"
+log "RETRY:          ${RETRY_SECONDS}s"
+log "EXTRAS_ENABLED: $EXTRAS_ENABLED"
+log "EXEC_IMP:       $EXEC_IMPERATIVE"
+log "EXEC_INF:       $EXEC_INFORMATIVE"
+log "SYNC_CLIENTS:   $SYNC_CLIENTS"
+log "STATE_DIR:      $STATE_DIR"
 
-# Devuelve el FQDN del equipo; si falla, el hostname corto.
-get_hostname() {
-    hostname -f 2>/dev/null || hostname
-}
+# Variables de ciclo inicializadas para evitar referencias antes de asignación.
+LOC_HOST=""
+LOC_IP=""
+LOC_MAC=""
+EXTRA_IMP=""
+EXTRA_INF=""
 
-# Devuelve la IP de salida usando la tabla de rutas.
-# Funciona aunque no haya conectividad real a 1.1.1.1 (consulta local).
-get_ip() {
-    ip route get 1.1.1.1 2>/dev/null \
-        | awk '/src/ { for (i=1;i<=NF;i++) if ($i=="src") { print $(i+1); exit } }' \
-        || true
-}
-
-# Devuelve la MAC de la primera interfaz física detectada.
-# Usa ip link show sin -o para obtener salida multilínea: el awk
-# de dos fases (nombre de interfaz → línea link/ether) funciona correctamente.
-# Filtra prefijos físicos conocidos: eth, ens, enp, wlan, wlp.
-get_mac() {
-    ip link show 2>/dev/null \
-        | awk '/^[0-9]+: (eth|ens|enp|wlan|wlp)/ { iface=1; next }
-               iface && /link\/ether/ { print $2; exit }
-               /^[0-9]+:/ { iface=0 }' \
-        || true
-}
-
-# Ejecuta el script indicado por $1 y devuelve su salida JSON normalizada
-# (claves ordenadas para comparación determinista en VAS).
-# Devuelve cadena vacía y exit 0 si el script no está configurado, falla,
-# o produce JSON inválido — el campo se omite del payload sin interrumpir el ciclo.
+# ---------------------------------------------------------------------------
+# run_extra_script: ejecuta un script extra y devuelve JSON normalizado.
+# Devuelve "" y exit 0 si no está configurado, falla, o produce JSON inválido.
+# En esos casos el campo se envía como null a VAS (COALESCE: conserva valor).
+# ---------------------------------------------------------------------------
 run_extra_script() {
     local script="$1"
     [[ -z "$script" ]] && return 0
@@ -150,7 +84,6 @@ run_extra_script() {
         return 0
     }
 
-    # Normalizar claves del JSON para comparación determinista en VAS
     local normalized
     normalized="$(echo "$output" | jq -c 'to_entries | sort_by(.key) | from_entries' 2>/dev/null)" || {
         log "[EXTRA] Salida de $script no es JSON válido — omitiendo campo."
@@ -161,74 +94,43 @@ run_extra_script() {
 }
 
 # ---------------------------------------------------------------------------
-# Funciones principales del cliente
+# collect_extras: rellena EXTRA_IMP y EXTRA_INF según política de configuración.
+#
+#   EXTRAS_ENABLED=false → "{}" en ambos (borrado explícito en VAS; limpia
+#                          cualquier valor previo almacenado en la BD).
+#   EXEC_*=cycle         → ejecutar script; "" en fallo (null → COALESCE:
+#                          VAS conserva el valor existente ante fallos transitorios).
+#   EXEC_*=delegate      → "" (null → COALESCE; vac-register es quien aporta
+#                          el JSON cuando el proceso productor lo invoca).
 # ---------------------------------------------------------------------------
-
-# Recopila hostname, IP y MAC actuales, construye el payload JSON
-# y lo envía a POST /register. Sirve como heartbeat (actualiza last_seen
-# siempre) y como registro inicial o de actualización.
-# Imprime la respuesta JSON del servidor y devuelve 0 si tuvo éxito.
-register_client() {
-    local host ip mac extra_imp extra_inf payload response
-
-    host="$(get_hostname)"
-    ip="$(get_ip)"
-    mac="$(get_mac)"
-
-    log "[REGISTER] Recopilando datos del equipo:"
-    log "[REGISTER]   hostname : $host"
-    log "[REGISTER]   ip       : ${ip:-(vacía)}"
-    log "[REGISTER]   mac      : ${mac:-(vacía)}"
-
-    # Sin IP no tiene sentido registrar: el servidor la necesita como dato clave.
-    if [[ -z "$ip" ]]; then
-        log "[REGISTER] IP vacía — sin red activa. Abortando registro."
-        return 1
+collect_extras() {
+    if [[ "$EXTRAS_ENABLED" != "true" ]]; then
+        EXTRA_IMP="{}"
+        EXTRA_INF="{}"
+        log_debug "[EXTRA] Desactivado → {} en ambos campos (borrado explícito en VAS)."
+        return
     fi
 
-    [[ -z "$mac" ]] && log "[REGISTER] MAC vacía (interfaz virtual o sin detección). Registrando sin MAC."
-
-    # Recoger campos extra de scripts externos (vacío = omitir del payload)
-    extra_imp="$(run_extra_script "$EXTRA_IMPERATIVE_SCRIPT")"
-    extra_inf="$(run_extra_script "$EXTRA_INFORMATIVE_SCRIPT")"
-
-    # Construir payload incluyendo los extras solo si existen
-    payload="$(jq -n \
-        --arg  id       "$CLIENT_ID" \
-        --arg  hostname "$host"      \
-        --arg  ip       "$ip"        \
-        --arg  mac      "$mac"       \
-        --argjson extra_imp "${extra_imp:-null}" \
-        --argjson extra_inf "${extra_inf:-null}" \
-        '{
-            id:       $id,
-            hostname: $hostname,
-            ip:       $ip,
-            mac:      $mac,
-            extra_imperative:  (if $extra_imp  != null then $extra_imp  else null end),
-            extra_informative: (if $extra_inf != null then $extra_inf else null end)
-        }')"
-
-    log "[REGISTER] Enviando POST ${VAS_HOST%/}/register ..."
-
-    response="$(curl -fsS \
-        --max-time 10 --connect-timeout 5 \
-        -X POST "${VAS_HOST%/}/register" \
-        -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null)" || response=""
-
-    if [[ -n "$response" ]]; then
-        log "[REGISTER] Respuesta VAS: $response"
-        echo "$response"
-        return 0
+    if [[ "$EXEC_IMPERATIVE" == "cycle" ]]; then
+        EXTRA_IMP="$(run_extra_script "$EXTRA_IMPERATIVE_SCRIPT")"
     else
-        log "[REGISTER] Sin respuesta de VAS (timeout o error de red)."
-        return 1
+        # delegate: VAC envía null para que VAS aplique COALESCE.
+        # El proceso externo que tenga los datos llamará a vac-register.
+        EXTRA_IMP=""
+        log_debug "[EXTRA] extra_imperative: delegate → null (COALESCE en VAS)."
+    fi
+
+    if [[ "$EXEC_INFORMATIVE" == "cycle" ]]; then
+        EXTRA_INF="$(run_extra_script "$EXTRA_INFORMATIVE_SCRIPT")"
+    else
+        EXTRA_INF=""
+        log_debug "[EXTRA] extra_informative: delegate → null (COALESCE en VAS)."
     fi
 }
 
-# Consulta GET /version en VAS y devuelve el valor de .version.
-# Devuelve cadena vacía si la petición falla.
+# ---------------------------------------------------------------------------
+# get_remote_version: GET /version → .version, o "" si falla.
+# ---------------------------------------------------------------------------
 get_remote_version() {
     curl -fsS --max-time 10 --connect-timeout 5 \
         "${VAS_HOST%/}/version" 2>/dev/null \
@@ -236,100 +138,148 @@ get_remote_version() {
         || echo ""
 }
 
-# Descarga el inventario completo desde GET /clients y lo guarda en
-# CLIENTS_FILE usando un fichero temporal para garantizar atomicidad:
-# si la descarga falla a mitad, CLIENTS_FILE no queda corrupto.
-download_clients() {
-    log "[SYNC] Descargando inventario: ${VAS_HOST%/}/clients"
-
-    if curl -fsS --max-time 15 --connect-timeout 5 \
-        "${VAS_HOST%/}/clients" -o "$TMP_CLIENTS" 2>/dev/null; then
-
-        local count
-        count="$(jq '.clients | length' "$TMP_CLIENTS" 2>/dev/null || echo '?')"
-        mv "$TMP_CLIENTS" "$CLIENTS_FILE"
-        log "[SYNC] Inventario guardado: $CLIENTS_FILE ($count equipo(s))"
-        return 0
-    else
-        log "[SYNC-ERROR] Error descargando inventario. CLIENTS_FILE no modificado."
-        rm -f "$TMP_CLIENTS"
+# ---------------------------------------------------------------------------
+# selfcheck_local: compara los datos actuales del equipo (LOC_HOST/IP/MAC y
+# EXTRA_IMP si EXEC_IMPERATIVE=cycle) contra los valores de identity.json.
+#
+# Precondición: LOC_HOST, LOC_IP, LOC_MAC y EXTRA_IMP deben estar asignados
+# antes de llamar a esta función (lo hace collect_extras + get_hostname/ip/mac).
+#
+# Devuelve 0 si todo coincide, 1 si hay discordancia o no hay identity.json.
+# ---------------------------------------------------------------------------
+selfcheck_local() {
+    if ! load_identity; then
+        log "[SELFCHECK] Sin identity.json — forzando registro."
         return 1
     fi
+
+    local mismatch=0
+    [[ "$LOC_HOST" != "$IDENTITY_HOST" ]] && { log "[SELFCHECK] hostname: '$IDENTITY_HOST' → '$LOC_HOST'"; mismatch=1; }
+    [[ "$LOC_IP"   != "$IDENTITY_IP"   ]] && { log "[SELFCHECK] IP: '$IDENTITY_IP' → '$LOC_IP'";           mismatch=1; }
+    [[ "$LOC_MAC"  != "$IDENTITY_MAC"  ]] && { log "[SELFCHECK] MAC: '$IDENTITY_MAC' → '$LOC_MAC'";        mismatch=1; }
+
+    if [[ "$EXTRAS_ENABLED" == "true" && "$EXEC_IMPERATIVE" == "cycle" ]]; then
+        # Solo extra_imperative dispara registro: es el único campo que sube versión en VAS.
+        # extra_informative es puramente informativo y nunca provoca bump_version,
+        # por lo que su cambio no justifica interrumpir el ciclo de heartbeat.
+        # Comparar solo si el script produjo salida (EXTRA_IMP!=""):
+        # script fallido → "" → COALESCE en VAS, sin forzar registro innecesario.
+        if [[ -n "$EXTRA_IMP" && "$EXTRA_IMP" != "$IDENTITY_IMP" ]]; then
+            log "[SELFCHECK] extra_imperative cambió."
+            mismatch=1
+        fi
+    fi
+
+    [[ "$mismatch" -eq 0 ]] && log_debug "[SELFCHECK] Datos locales coinciden con identity.json."
+    return "$mismatch"
 }
 
-# Comprueba si los datos de este cliente en VAS coinciden con los valores
-# actuales del equipo (hostname, IP, MAC).
-# Usa GET /clients/{CLIENT_ID} directamente: el UUID actúa como credencial
-# implícita — solo quien lo conoce puede consultar sus propios datos.
-# El UUID no aparece en GET /clients (listado público), por diseño.
-# Devuelve 0 (coincide) o 1 (ausente o discordante).
-client_data_matches() {
+# ---------------------------------------------------------------------------
+# refresh_identity: GET /clients/{UUID} → actualiza identity.json con los
+# datos confirmados por VAS (incluidos extras almacenados en BD).
+# Devuelve 1 si no se puede contactar.
+# ---------------------------------------------------------------------------
+refresh_identity() {
     local response
-
-    log "[SYNC] Consultando datos propios en VAS: ${VAS_HOST%/}/clients/${CLIENT_ID}"
-
-    # curl -f devuelve vacío y exit≠0 en 4xx/5xx → cliente no registrado → return 1
     response="$(curl -fsS --max-time 10 --connect-timeout 5 \
         "${VAS_HOST%/}/clients/${CLIENT_ID}" 2>/dev/null)" || response=""
 
     if [[ -z "$response" ]]; then
-        log "[SYNC] Cliente no encontrado en VAS (404 o error de red). Asumiendo discordancia."
+        log "[IDENTITY] No se pudo obtener datos propios de VAS. Identity no actualizado."
         return 1
     fi
 
-    local remote_ip remote_host remote_mac local_ip local_host local_mac
+    local vas_host vas_ip vas_mac vas_imp vas_inf
+    vas_host="$(echo "$response" | jq -r '.hostname          // empty' 2>/dev/null || echo "")"
+    vas_ip="$(  echo "$response" | jq -r '.ip                // empty' 2>/dev/null || echo "")"
+    vas_mac="$( echo "$response" | jq -r '.mac               // empty' 2>/dev/null || echo "")"
+    vas_imp="$( echo "$response" | jq -c '.extra_imperative  // empty' 2>/dev/null || echo "")"
+    vas_inf="$( echo "$response" | jq -c '.extra_informative // empty' 2>/dev/null || echo "")"
 
-    remote_ip="$(echo   "$response" | jq -r '.ip'       2>/dev/null || echo "")"
-    remote_host="$(echo "$response" | jq -r '.hostname' 2>/dev/null || echo "")"
-    remote_mac="$(echo  "$response" | jq -r '.mac'      2>/dev/null || echo "")"
-
-    local_ip="$(get_ip)"
-    local_host="$(get_hostname)"
-    local_mac="$(get_mac)"
-
-    log "[SYNC] Comparando datos propios:"
-    log "[SYNC]   hostname : remoto='$remote_host' local='$local_host'"
-    log "[SYNC]   ip       : remoto='$remote_ip'   local='$local_ip'"
-    log "[SYNC]   mac      : remoto='$remote_mac'  local='$local_mac'"
-
-    local mismatch=0
-    [[ "$remote_ip"   != "$local_ip"   ]] && { log "[SYNC]   → IP discordante";       mismatch=1; }
-    [[ "$remote_host" != "$local_host" ]] && { log "[SYNC]   → hostname discordante"; mismatch=1; }
-    [[ "$remote_mac"  != "$local_mac"  ]] && { log "[SYNC]   → MAC discordante";      mismatch=1; }
-
-    [[ "$mismatch" -eq 0 ]] && log "[SYNC]   → Datos correctos en el inventario."
-    return "$mismatch"
+    save_identity "$vas_host" "$vas_ip" "$vas_mac" "$vas_imp" "$vas_inf"
+    log_debug "[IDENTITY] Actualizado desde VAS: host=$vas_host ip=$vas_ip"
 }
+
+# ---------------------------------------------------------------------------
+# Fase de arranque: esperar VAS_HOST y registro inicial (bloqueante)
+# ---------------------------------------------------------------------------
+# Garantiza que identity.json existe antes de entrar en el bucle principal,
+# de modo que el selfcheck siempre puede comparar contra datos conocidos.
+# ---------------------------------------------------------------------------
+while [[ -z "$VAS_HOST" ]]; do
+    log "VAS_HOST no definido en $CONF_FILE. Esperando ${RETRY_SECONDS}s."
+    sleep "$RETRY_SECONDS"
+done
+
+log "[STARTUP] Registrando equipo en VAS (fase inicial)..."
+while true; do
+    LOC_HOST="$(get_hostname)"
+    LOC_IP="$(get_ip)"
+    LOC_MAC="$(get_mac)"
+    collect_extras
+
+    if register_client "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" > /dev/null; then
+        save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF"
+        log "[STARTUP] Registro inicial completado."
+
+        remote_ver="$(get_remote_version)"
+        if [[ -n "$remote_ver" && "$remote_ver" =~ ^[0-9]+$ ]]; then
+            echo "$remote_ver" > "$VERSION_FILE"
+            log "[STARTUP] Versión local inicializada: $remote_ver"
+        fi
+
+        if [[ "$SYNC_CLIENTS" == "true" ]]; then
+            download_clients || log "[STARTUP] No se pudo descargar inventario inicial."
+        fi
+
+        # Refrescar identity.json con los valores confirmados por VAS
+        # (los extras pueden diferir si VAS aplicó COALESCE sobre valores previos)
+        refresh_identity || log "[STARTUP] No se pudo refrescar identity desde VAS. Usando datos locales."
+        break
+    else
+        log "[STARTUP] No se pudo contactar con VAS. Reintentando en ${RETRY_SECONDS}s."
+        sleep "$RETRY_SECONDS"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 # Bucle principal
 # ---------------------------------------------------------------------------
 while true; do
-
-    # Guardar marca de tiempo del inicio del ciclo para logs contextuales
     cycle_start="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-    log "--- Ciclo iniciado: $cycle_start ---"
+    log_debug "--- Ciclo iniciado: $cycle_start ---"
 
-    # Guardia: VAS_HOST debe estar definido en la configuración
-    if [[ -z "$VAS_HOST" ]]; then
-        log "VAS_HOST no definido en $CONF_FILE. Esperando ${RETRY_SECONDS}s."
-        sleep "$RETRY_SECONDS"
-        continue
+    # --- Paso 1: Recopilar datos actuales ------------------------------------
+    LOC_HOST="$(get_hostname)"
+    LOC_IP="$(get_ip)"
+    LOC_MAC="$(get_mac)"
+    collect_extras   # → EXTRA_IMP, EXTRA_INF
+
+    # --- Paso 2: Selfcheck local + heartbeat o registro ----------------------
+    needs_register=false
+
+    if selfcheck_local; then
+        # Sin cambios → heartbeat ligero (solo last_seen)
+        if ! heartbeat_client; then
+            log "[HEARTBEAT] Sin respuesta o cliente no registrado — re-registrando."
+            needs_register=true
+        fi
+    else
+        needs_register=true
     fi
 
-    # --- Paso 1: Heartbeat + registro ----------------------------------------
-    # Se envía en cada ciclo independientemente del estado de versión.
-    # VAS actualiza last_seen siempre; solo sube versión si los datos cambian.
-    # Esto mantiene el cliente activo frente al TTL de VAS.
-    if ! register_client > /dev/null; then
-        log "No se pudo contactar con VAS. Reintentando en ${RETRY_SECONDS}s."
-        sleep "$RETRY_SECONDS"
-        continue
+    if [[ "$needs_register" == "true" ]]; then
+        if ! register_client "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" > /dev/null; then
+            log "No se pudo contactar con VAS. Reintentando en ${RETRY_SECONDS}s."
+            sleep "$RETRY_SECONDS"
+            continue
+        fi
+        save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF"
     fi
 
-    # --- Paso 2: Comparar versiones ------------------------------------------
+    # --- Paso 3: Comparar versiones ------------------------------------------
     local_version="$(tr -d '[:space:]' < "$VERSION_FILE")"
-    log "[VERSION] Versión local: $local_version"
+    log_debug "[VERSION] Versión local: $local_version"
 
     remote_version_raw="$(get_remote_version)"
 
@@ -339,7 +289,6 @@ while true; do
         continue
     fi
 
-    # La versión debe ser numérica (YYYYMMDDHHMMSS). Rechazar valores malformados.
     if [[ ! "$remote_version_raw" =~ ^[0-9]+$ ]]; then
         log "[VERSION] Versión remota inválida: '$remote_version_raw'. Reintentando en ${RETRY_SECONDS}s."
         sleep "$RETRY_SECONDS"
@@ -347,43 +296,26 @@ while true; do
     fi
 
     remote_version="$remote_version_raw"
-    log "[VERSION] Versión remota: $remote_version"
+    log_debug "[VERSION] Versión remota: $remote_version"
 
     if [[ "$remote_version" == "$local_version" ]]; then
-        log "[VERSION] Sin cambios. Próxima comprobación en ${CHECK_SECONDS}s."
+        log_debug "[VERSION] Sin cambios. Próxima comprobación en ${CHECK_SECONDS}s."
         sleep "$CHECK_SECONDS"
         continue
     fi
 
     log "[SYNC] Nueva versión detectada: $local_version → $remote_version"
 
-    # --- Paso 3: Descargar inventario actualizado ----------------------------
-    if ! download_clients; then
-        log "[SYNC-ERROR] No se pudo descargar el inventario. Reintentando en ${RETRY_SECONDS}s."
-        sleep "$RETRY_SECONDS"
-        continue
+    # --- Paso 4: Sincronizar inventario e identity ---------------------------
+    if [[ "$SYNC_CLIENTS" == "true" ]]; then
+        download_clients || log "[SYNC-ERROR] No se pudo descargar el inventario. Continuando."
     fi
 
-    # --- Paso 4: Verificar datos propios en el inventario --------------------
-    if client_data_matches; then
-        # Los datos de este equipo están correctos en VAS.
-        # Aceptar la nueva versión y actualizar el estado local.
-        echo "$remote_version" > "$VERSION_FILE"
-        log "[SYNC] Datos propios correctos. Versión local actualizada: $remote_version"
-    else
-        # Este equipo no figura o sus datos están desactualizados.
-        # Forzar re-registro para que VAS lo actualice y publique nueva versión.
-        log "[SYNC] Datos ausentes o discordantes. Enviando re-registro a VAS."
-        if register_client > /dev/null; then
-            echo "$remote_version" > "$VERSION_FILE"
-            log "[SYNC] Re-registro enviado. Versión local: $remote_version"
-        else
-            log "[SYNC-ERROR] Re-registro fallido. Reintentando en ${RETRY_SECONDS}s."
-            sleep "$RETRY_SECONDS"
-            continue
-        fi
-    fi
+    refresh_identity || log "[IDENTITY] No se pudo refrescar identity desde VAS. Continuando."
 
-    log "--- Ciclo completado. Próxima comprobación en ${CHECK_SECONDS}s. ---"
+    echo "$remote_version" > "$VERSION_FILE"
+    log "[SYNC] Versión local actualizada: $remote_version"
+
+    log_debug "--- Ciclo completado. Próxima comprobación en ${CHECK_SECONDS}s. ---"
     sleep "$CHECK_SECONDS"
 done
