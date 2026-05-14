@@ -28,7 +28,7 @@ vx-dga-l-veyon-sync   → integración Veyon opcional
 - Versión: 0.9-1
 - Arquitectura: all
 - Mantenedor: Gabriel Navia \<correos@gabrielnav.es\>
-- Licencia: GPL-3.0+
+- Licencia: Apache 2.0
 
 ## Archivos instalados
 
