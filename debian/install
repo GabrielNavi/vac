@@ -3,3 +3,4 @@ usr/bin/vac-register usr/bin/
 usr/lib/vac/vac-common.sh usr/lib/vac/
 etc/vac/vac.conf etc/vac/
 lib/systemd/system/vac.service lib/systemd/system/
+usr/share/vac/vac.conf.defaults usr/share/vac/

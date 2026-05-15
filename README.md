@@ -25,7 +25,7 @@ vx-dga-l-veyon-sync   → integración Veyon opcional
 ## Información del paquete
 
 - Nombre: `vx-dga-l-vac`
-- Versión: 0.9-1
+- Versión: 0.9-4~rc
 - Arquitectura: all
 - Mantenedor: Gabriel Navia \<correos@gabrielnav.es\>
 - Licencia: Apache 2.0
@@ -39,6 +39,7 @@ vx-dga-l-veyon-sync   → integración Veyon opcional
 | `usr/lib/vac/vac-common.sh` | Librería compartida: log, log_debug, registro, red, identidad |
 | `etc/vac/vac.conf` | Configuración editable |
 | `lib/systemd/system/vac.service` | Unidad systemd |
+| `usr/share/vac/vac.conf.defaults` | Referencia de valores por defecto (solo lectura) |
 
 ## Estado local
 

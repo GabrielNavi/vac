@@ -1,3 +1,14 @@
+vx-dga-l-vac (0.9-4~rc) unstable; urgency=low
+
+  * Añadido /usr/share/vac/vac.conf.defaults: copia de referencia de la
+    configuración por defecto, siempre actualizada en upgrade.
+    Permite comparar con la configuración activa:
+    diff /etc/vac/vac.conf /usr/share/vac/vac.conf.defaults
+  * postrm: purge limpia ahora /etc/vac, /var/lib/vac y /var/log/vac
+    de forma completa (antes no eliminaba /etc/vac ni /var/log/vac).
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Fri, 15 May 2026 12:00:00 +0200
+
 vx-dga-l-vac (0.9-3~rc) unstable; urgency=low
 
   * Compatibilidad con el nuevo formato de versión YYYYMMDDHHMMSSmmm de VAS.
