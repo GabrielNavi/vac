@@ -1,7 +1,9 @@
 #!/bin/sh
 set -e
 
-systemctl stop vac.service || true
-systemctl disable vac.service || true
+if [ "$1" = "remove" ]; then
+    systemctl stop vac.service || true
+    systemctl disable vac.service || true
+fi
 
 exit 0
