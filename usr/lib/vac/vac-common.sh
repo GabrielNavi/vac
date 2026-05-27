@@ -36,9 +36,10 @@ RETRY_SECONDS=60
 CHECK_SECONDS=300
 EXTRAS_ENABLED=false
 EXTRAS_TTL=86400
-EXTRAS_IMPERATIVE_HOOKS_DIR="/etc/vac/extras_imperative.d"
-EXTRAS_INFORMATIVE_HOOKS_DIR="/etc/vac/extras_informative.d"
+EXTRAS_IMPERATIVE_HOOKS_DIR="${EXTRAS_IMPERATIVE_HOOKS_DIR:-/etc/vac/extras_imperative.d}"
+EXTRAS_INFORMATIVE_HOOKS_DIR="${EXTRAS_INFORMATIVE_HOOKS_DIR:-/etc/vac/extras_informative.d}"
 SYNC_CLIENTS=true
+PARALLELIZATION=false
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -103,6 +104,7 @@ load_conf() {
             EXTRAS_IMPERATIVE_HOOKS_DIR) EXTRAS_IMPERATIVE_HOOKS_DIR="$val"; (( ++loaded )) ;;
             EXTRAS_INFORMATIVE_HOOKS_DIR) EXTRAS_INFORMATIVE_HOOKS_DIR="$val"; (( ++loaded )) ;;
             SYNC_CLIENTS)                SYNC_CLIENTS="$val";                (( ++loaded )) ;;
+            PARALLELIZATION)          PARALLELIZATION="$val";          (( ++loaded )) ;;
             LOG_LEVEL)                LOG_LEVEL="$val";                (( ++loaded )) ;;
             LOG_FILE)                 LOG_FILE="$val";                 (( ++loaded )) ;;
         esac

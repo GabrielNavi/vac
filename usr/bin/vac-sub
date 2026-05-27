@@ -1,42 +1,78 @@
 #!/bin/bash
-# VAC — Vitalinux Autoregistration Client
+# vac-sub — Bucle VAC para una sub-instancia de paralelización.
 #
-# Servicio systemd que registra este equipo en VAS y mantiene una copia
-# local del inventario de red en /var/lib/vac/clients.json.
+# Uso: vac-sub <name>
 #
-# Flujo:
-#   Arranque: espera a VAS_HOST, registro inicial bloqueante, identity.json.
+#   <name> es el nombre de la carpeta en /etc/vac/vac.sub/<name>/.
+#   Esa carpeta debe contener al menos vac.conf con VAS_HOST definido.
 #
-#   Cada ciclo:
-#     1. Recopila hostname/IP/MAC y extras (según EXTRAS_ENABLED y EXEC_*).
-#     2. Selfcheck local: compara con identity.json.
-#        - Sin cambios → POST /heartbeat (ligero, solo last_seen).
-#          Si 404 o error de red → POST /register (re-registro).
-#        - Con cambios → POST /register; guarda identity.json.
-#     3. GET /version → compara con versión local.
-#     4. Si nueva versión:
-#        - Si SYNC_CLIENTS=true: GET /clients → clients.json.
-#        - GET /clients/{UUID} → identity.json (reflejo desde VAS).
-#        - Actualizar versión local.
+# Diferencias respecto a vac:
+#   - Rutas derivadas del nombre: STATE_DIR=/var/lib/vac/sub/<name>/
+#   - UUID derivado (v5): uuidgen --sha1 --namespace <base-uuid> --name <name>
+#     Determinista: el mismo equipo+nombre produce siempre el mismo UUID en VAS.
+#   - Hereda defaults de /etc/vac/vac.conf; los sobreescribe con la config de instancia.
+#   - LOG_TAG=[NAME-VAC] para identificar en journalctl.
+#   - No lanza vac-sub-manager (las sub-instancias no se anidan).
 #
-# Journalctl: journalctl -u vac -f
+# Journalctl:
+#   journalctl -u vac     | grep '\[SAMBA-VAC\]'   # cuando lo lanza vac
+#   journalctl -u vac-sub | grep '\[SAMBA-VAC\]'   # cuando corre standalone
 
 set -euo pipefail
 
-LOG_TAG="[VAC]"
+# ---------------------------------------------------------------------------
+# Argumento y validación
+# ---------------------------------------------------------------------------
+if [[ $# -lt 1 || -z "$1" ]]; then
+    echo "Uso: vac-sub <name>" >&2
+    exit 1
+fi
+
+NAME="$1"
+INSTANCE_DIR="/etc/vac/vac.sub/${NAME}"
+
+if [[ ! -d "$INSTANCE_DIR" ]]; then
+    echo "Error: sub-instancia '$NAME' no encontrada en $INSTANCE_DIR" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Rutas derivadas — definir ANTES de sourcear vac-common.sh para que el
+# patrón :- respete los valores ya establecidos
+# ---------------------------------------------------------------------------
+STATE_DIR="/var/lib/vac/sub/${NAME}"
+CONF_FILE="${INSTANCE_DIR}/vac.conf"
+CONF_DIR="${INSTANCE_DIR}/vac.conf.d"
+EXTRAS_IMPERATIVE_HOOKS_DIR="${INSTANCE_DIR}/extras_imperative.d"
+EXTRAS_INFORMATIVE_HOOKS_DIR="${INSTANCE_DIR}/extras_informative.d"
+ID_FILE="${STATE_DIR}/vac-id"
+LOG_TAG="[${NAME^^}-VAC]"
+
 source /usr/lib/vac/vac-common.sh
+
+# ---------------------------------------------------------------------------
+# Carga de configuración: base (herencia) + instancia (override)
+# ---------------------------------------------------------------------------
+load_conf "/etc/vac/vac.conf"          # defaults del equipo (VAS_HOST base, etc.)
+load_conf "$CONF_FILE"                 # overrides de esta instancia
+if [[ -d "$CONF_DIR" ]]; then
+    for cfg in "$CONF_DIR"/*.conf; do
+        [[ -f "$cfg" ]] || continue
+        load_conf "$cfg"
+    done
+fi
 
 # ---------------------------------------------------------------------------
 # Inicialización
 # ---------------------------------------------------------------------------
-load_all_conf
-
 mkdir -p "$STATE_DIR"
 
+# UUID derivado (v5, determinista). Se genera una sola vez y se almacena.
 if [[ ! -f "$ID_FILE" ]]; then
-    uuidgen > "$ID_FILE"
+    BASE_UUID="$(tr -d '[:space:]' < /etc/vac/vac-id)"
+    uuidgen --sha1 --namespace "${BASE_UUID}" --name "${NAME}" > "$ID_FILE"
     chmod 600 "$ID_FILE"
-    log "UUID generado: $(cat "$ID_FILE")"
+    log "UUID derivado generado: $(cat "$ID_FILE") (base=${BASE_UUID} name=${NAME})"
 fi
 
 if [[ ! -f "$VERSION_FILE" ]]; then
@@ -46,26 +82,16 @@ fi
 
 CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
 
-log "=== Iniciando VAC ==="
+log "=== Iniciando ${NAME}-vac ==="
 log "UUID:           $CLIENT_ID"
 log "VAS_HOST:       ${VAS_HOST:-'(no definido)'}"
 log "CHECK:          ${CHECK_SECONDS}s"
 log "RETRY:          ${RETRY_SECONDS}s"
 log "EXTRAS_ENABLED: $EXTRAS_ENABLED"
-log "EXTRAS_TTL:     ${EXTRAS_TTL}s"
 log "SYNC_CLIENTS:   $SYNC_CLIENTS"
 log "STATE_DIR:      $STATE_DIR"
 
-if [[ "$PARALLELIZATION" == "true" ]]; then
-    if command -v vac-sub-manager >/dev/null 2>&1; then
-        vac-sub-manager &
-        log "[PARALLEL] vac-sub-manager lanzado (PID $!)"
-    else
-        log "[ERROR] PARALLELIZATION=true pero vac-sub-manager no encontrado. Continuando sin sub-instancias."
-    fi
-fi
-
-# Variables de ciclo inicializadas para evitar referencias antes de asignación.
+# Variables de ciclo
 LOC_HOST=""
 LOC_IP=""
 LOC_MAC=""
@@ -73,11 +99,9 @@ EXTRA_IMP=""
 EXTRA_INF=""
 
 # ---------------------------------------------------------------------------
-# _run_extras_hooks DIR FILE LABEL
-# Ejecuta todos los scripts ejecutables de DIR en orden léxico.
-# Por cada script: si produce JSON válido con exit 0, upserta la clave
-# (basename sin extensión). Errores → WARN, clave no modificada.
+# Funciones específicas de sub-instancia
 # ---------------------------------------------------------------------------
+
 _run_extras_hooks() {
     local dir="$1" file="$2" label="$3"
     [[ ! -d "$dir" ]] && return 0
@@ -85,7 +109,6 @@ _run_extras_hooks() {
     local hook key output normalized
     for hook in "$dir"/*; do
         [[ -f "$hook" && -x "$hook" ]] || continue
-        # La clave es el basename sin extensión: "10-cups.sh" → "10-cups".
         key="$(basename "$hook")"
         key="${key%.*}"
 
@@ -107,13 +130,6 @@ _run_extras_hooks() {
     done
 }
 
-# ---------------------------------------------------------------------------
-# collect_extras: ejecuta hooks cíclicos, expira claves TTL y construye
-# EXTRA_IMP / EXTRA_INF como JSON plano para enviar a VAS.
-#
-#   EXTRAS_ENABLED=false → "{}" en ambos (borrado explícito en VAS).
-#   EXTRAS_ENABLED=true  → hooks → expire → merge.
-# ---------------------------------------------------------------------------
 collect_extras() {
     if [[ "$EXTRAS_ENABLED" != "true" ]]; then
         EXTRA_IMP="{}"
@@ -132,9 +148,6 @@ collect_extras() {
     EXTRA_INF="$(build_extras_merge "$EXTRAS_INF_FILE")"
 }
 
-# ---------------------------------------------------------------------------
-# get_remote_version: GET /version → .version, o "" si falla.
-# ---------------------------------------------------------------------------
 get_remote_version() {
     curl -fsS --max-time 10 --connect-timeout 5 \
         "${VAS_HOST%/}/version" 2>/dev/null \
@@ -142,15 +155,6 @@ get_remote_version() {
         || echo ""
 }
 
-# ---------------------------------------------------------------------------
-# selfcheck_local: compara los datos actuales del equipo (LOC_HOST/IP/MAC y
-# EXTRA_IMP si EXEC_IMPERATIVE=cycle) contra los valores de identity.json.
-#
-# Precondición: LOC_HOST, LOC_IP, LOC_MAC y EXTRA_IMP deben estar asignados
-# antes de llamar a esta función (lo hace collect_extras + get_hostname/ip/mac).
-#
-# Devuelve 0 si todo coincide, 1 si hay discordancia o no hay identity.json.
-# ---------------------------------------------------------------------------
 selfcheck_local() {
     if ! load_identity; then
         log "[SELFCHECK] Sin identity.json — forzando registro."
@@ -163,10 +167,6 @@ selfcheck_local() {
     [[ "$LOC_MAC"  != "$IDENTITY_MAC"  ]] && { log "[SELFCHECK] MAC: '$IDENTITY_MAC' → '$LOC_MAC'";        mismatch=1; }
 
     if [[ "$EXTRAS_ENABLED" == "true" ]]; then
-        # Solo extra_imperative dispara registro: es el único campo que sube versión en VAS.
-        # extra_informative es puramente informativo.
-        # Comparar solo si el merge produjo datos (EXTRA_IMP != ""):
-        # fichero sin claves o no existente → "" → COALESCE en VAS, sin forzar registro.
         if [[ -n "$EXTRA_IMP" && "$EXTRA_IMP" != "$IDENTITY_IMP" ]]; then
             log "[SELFCHECK] extra_imperative cambió."
             mismatch=1
@@ -177,11 +177,6 @@ selfcheck_local() {
     return "$mismatch"
 }
 
-# ---------------------------------------------------------------------------
-# refresh_identity: GET /clients/{UUID} → actualiza identity.json con los
-# datos confirmados por VAS (incluidos extras almacenados en BD).
-# Devuelve 1 si no se puede contactar.
-# ---------------------------------------------------------------------------
 refresh_identity() {
     local response
     response="$(curl -fsS --max-time 10 --connect-timeout 5 \
@@ -205,9 +200,6 @@ refresh_identity() {
 
 # ---------------------------------------------------------------------------
 # Fase de arranque: esperar VAS_HOST y registro inicial (bloqueante)
-# ---------------------------------------------------------------------------
-# Garantiza que identity.json existe antes de entrar en el bucle principal,
-# de modo que el selfcheck siempre puede comparar contra datos conocidos.
 # ---------------------------------------------------------------------------
 while [[ -z "$VAS_HOST" ]]; do
     log "VAS_HOST no definido en $CONF_FILE. Esperando ${RETRY_SECONDS}s."
@@ -235,8 +227,6 @@ while true; do
             download_clients || log "[STARTUP] No se pudo descargar inventario inicial."
         fi
 
-        # Refrescar identity.json con los valores confirmados por VAS
-        # (los extras pueden diferir si VAS aplicó COALESCE sobre valores previos)
         refresh_identity || log "[STARTUP] No se pudo refrescar identity desde VAS. Usando datos locales."
         break
     else
@@ -252,17 +242,14 @@ while true; do
     cycle_start="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
     log_debug "--- Ciclo iniciado: $cycle_start ---"
 
-    # --- Paso 1: Recopilar datos actuales ------------------------------------
     LOC_HOST="$(get_hostname)"
     LOC_IP="$(get_ip)"
     LOC_MAC="$(get_mac)"
-    collect_extras   # → EXTRA_IMP, EXTRA_INF
+    collect_extras
 
-    # --- Paso 2: Selfcheck local + heartbeat o registro ----------------------
     needs_register=false
 
     if selfcheck_local; then
-        # Sin cambios → heartbeat ligero (solo last_seen)
         if ! heartbeat_client; then
             log "[HEARTBEAT] Sin respuesta o cliente no registrado — re-registrando."
             needs_register=true
@@ -280,7 +267,6 @@ while true; do
         save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF"
     fi
 
-    # --- Paso 3: Comparar versiones ------------------------------------------
     local_version="$(tr -d '[:space:]' < "$VERSION_FILE")"
     log_debug "[VERSION] Versión local: $local_version"
 
@@ -309,7 +295,6 @@ while true; do
 
     log "[SYNC] Nueva versión detectada: $local_version → $remote_version"
 
-    # --- Paso 4: Sincronizar inventario e identity ---------------------------
     if [[ "$SYNC_CLIENTS" == "true" ]]; then
         download_clients || log "[SYNC-ERROR] No se pudo descargar el inventario. Continuando."
     fi

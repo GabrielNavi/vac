@@ -30,6 +30,7 @@ source /usr/lib/vac/vac-common.sh
 # ---------------------------------------------------------------------------
 FIELD=""     # "imperative" | "informative"
 KEY=""
+NAME=""      # sub-instancia (vac.sub/<name>); vacío = instancia principal
 SOURCE=""    # "-" (stdin) | ruta de archivo
 DELETE=false
 
@@ -40,6 +41,9 @@ while [[ $# -gt 0 ]]; do
         --key)
             [[ -z "${2:-}" ]] && { log "Error: --key requiere un argumento."; exit 1; }
             KEY="$2"; shift 2 ;;
+        --name)
+            [[ -z "${2:-}" ]] && { log "Error: --name requiere un argumento."; exit 1; }
+            NAME="$2"; shift 2 ;;
         -d) DELETE=true; shift ;;
         -)  SOURCE="-"; shift ;;
         -*) log "Opción desconocida: $1"; exit 1 ;;
@@ -54,6 +58,31 @@ if [[ -n "$FIELD" ]]; then
         log "Error: se requiere fuente JSON (- o ruta de archivo), o -d para borrar."
         exit 1
     fi
+fi
+
+# ---------------------------------------------------------------------------
+# Redirección a sub-instancia (--name)
+# ---------------------------------------------------------------------------
+if [[ -n "$NAME" ]]; then
+    INSTANCE_DIR="/etc/vac/vac.sub/${NAME}"
+    if [[ ! -d "$INSTANCE_DIR" ]]; then
+        log "Error: sub-instancia '$NAME' no encontrada en $INSTANCE_DIR"
+        exit 1
+    fi
+    STATE_DIR="/var/lib/vac/sub/${NAME}"
+    CONF_FILE="${INSTANCE_DIR}/vac.conf"
+    CONF_DIR="${INSTANCE_DIR}/vac.conf.d"
+    EXTRAS_IMPERATIVE_HOOKS_DIR="${INSTANCE_DIR}/extras_imperative.d"
+    EXTRAS_INFORMATIVE_HOOKS_DIR="${INSTANCE_DIR}/extras_informative.d"
+    VERSION_FILE="${STATE_DIR}/version"
+    CLIENTS_FILE="${STATE_DIR}/clients.json"
+    TMP_CLIENTS="${STATE_DIR}/clients.json.tmp"
+    IDENTITY_FILE="${STATE_DIR}/identity.json"
+    TMP_IDENTITY="${STATE_DIR}/identity.json.tmp"
+    EXTRAS_IMP_FILE="${STATE_DIR}/extras_imperative.json"
+    EXTRAS_INF_FILE="${STATE_DIR}/extras_informative.json"
+    ID_FILE="${STATE_DIR}/vac-id"
+    LOG_TAG="[${NAME^^}-VAC-REGISTER]"
 fi
 
 # ---------------------------------------------------------------------------

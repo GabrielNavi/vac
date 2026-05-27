@@ -25,7 +25,7 @@ vx-dga-l-veyon-sync   → integración Veyon opcional
 ## Información del paquete
 
 - Nombre: `vx-dga-l-vac`
-- Versión: 1.0-1~rc
+- Versión: 1.0-2~rc
 - Arquitectura: all
 - Mantenedor: Gabriel Navia \<correos@gabrielnav.es\>
 - Licencia: Apache 2.0
@@ -36,9 +36,13 @@ vx-dga-l-veyon-sync   → integración Veyon opcional
 |---|---|
 | `usr/bin/vac` | Script Bash del servicio en bucle |
 | `usr/bin/vac-register` | Script de registro puntual |
+| `usr/bin/vac-sub` | Bucle VAC completo para sub-instancias de paralelización |
+| `usr/bin/vac-sub-manager` | Supervisor de sub-instancias (lanza y monitoriza `vac-sub`) |
+| `usr/bin/vac-sub-instance` | Gestión del ciclo de vida de sub-instancias (crear/eliminar/listar) |
 | `usr/lib/vac/vac-common.sh` | Librería compartida: log, registro, red, identidad, extras |
 | `etc/vac/vac.conf` | Configuración editable |
-| `lib/systemd/system/vac.service` | Unidad systemd |
+| `lib/systemd/system/vac.service` | Unidad systemd del servicio principal |
+| `lib/systemd/system/vac-sub.service` | Unidad systemd del supervisor independiente de sub-instancias |
 | `usr/share/vac/vac.conf.defaults` | Referencia de valores por defecto (solo lectura) |
 
 ## Estado local
@@ -46,11 +50,13 @@ vx-dga-l-veyon-sync   → integración Veyon opcional
 | Ruta | Descripción |
 |---|---|
 | `/etc/vac/vac-id` | UUID persistente del equipo (600, generado una sola vez) |
+| `/etc/vac/vac.sub/<name>/` | Configuración de sub-instancia de paralelización |
 | `/var/lib/vac/version` | Última versión del registro recibida de VAS |
 | `/var/lib/vac/identity.json` | Datos propios tal como fueron enviados a VAS por última vez |
 | `/var/lib/vac/clients.json` | Copia local del inventario completo (`SYNC_CLIENTS=true`) |
 | `/var/lib/vac/extras_imperative.json` | Estado interno de extras imperativos por clave |
 | `/var/lib/vac/extras_informative.json` | Estado interno de extras informativos por clave |
+| `/var/lib/vac/sub/<name>/` | Estado de cada sub-instancia (UUID, versión, identity, clients) |
 
 ## Flujo de operación
 
@@ -183,6 +189,75 @@ El parser no ejecuta código del fichero de configuración.
 | `EXTRAS_INFORMATIVE_HOOKS_DIR` | `/etc/vac/extras_informative.d` | Directorio de hooks cíclicos informativos |
 | `LOG_LEVEL` | `normal` | Nivel de log: `no` · `normal` · `debug` |
 | `LOG_FILE` | — | Fichero de log adicional con timestamp ISO-8601 UTC (vacío = solo journald) |
+| `PARALLELIZATION` | `false` | Si `true`, `vac` lanza `vac-sub-manager` al arrancar para gestionar sub-instancias |
+
+## Paralelización
+
+Un mismo equipo puede registrarse en múltiples VAS simultáneamente mediante sub-instancias independientes. Cada una tiene su propio UUID derivado (v5, determinista), su propio estado y su propia configuración.
+
+```
+/etc/vac/vac.sub/
+└── samba/
+    ├── vac.conf           # Solo VAS_HOST; hereda /etc/vac/vac.conf
+    └── vac.conf.d/
+
+/var/lib/vac/sub/
+└── samba/
+    ├── vac-id             # UUID v5 (sha1 del UUID base + "samba")
+    ├── version
+    ├── identity.json
+    └── clients.json
+```
+
+### Gestión de sub-instancias
+
+```bash
+# Crear sub-instancia
+vac-sub-instance --create samba --vas "http://10.0.1.5:8000"
+
+# Listar todas
+vac-sub-instance --list
+
+# Eliminar (aborta si el proceso está activo)
+vac-sub-instance --delete samba
+```
+
+### Modos de activación
+
+**Integrado en `vac.service`** (modo recomendado):
+```ini
+# /etc/vac/vac.conf
+PARALLELIZATION=true
+```
+```bash
+systemctl restart vac
+journalctl -u vac | grep '\[PARALLEL\]'
+```
+
+**Supervisor independiente** (sin instancia principal):
+```bash
+systemctl enable --now vac-sub.service
+journalctl -u vac-sub | grep '\[PARALLEL\]'
+```
+
+### Registro puntual en sub-instancia
+
+```bash
+echo '{"server":"10.0.0.2"}' | vac-register --name samba --imperative --key cups -
+```
+
+### Logging
+
+| Proceso | Journal | Filtro |
+|---|---|---|
+| `vac` (principal) | `vac.service` | `[VAC]` |
+| `vac-sub-manager` | `vac.service` o `vac-sub.service` | `[PARALLEL]` |
+| `vac-sub samba` | mismo que su padre | `[SAMBA-VAC]` |
+
+```bash
+journalctl -u vac | grep '\[PARALLEL\]'   # lifecycle
+journalctl -u vac | grep '\[SAMBA-VAC\]'  # sub-instancia samba
+```
 
 ## Integración con Veyon
 
@@ -191,9 +266,15 @@ VAC no interactúa con Veyon directamente. Si el equipo tiene Veyon instalado, i
 ## Servicio systemd
 
 ```bash
+# Instancia principal
 systemctl status vac
 systemctl restart vac
 journalctl -u vac -f
+
+# Supervisor independiente de sub-instancias
+systemctl status vac-sub
+systemctl restart vac-sub
+journalctl -u vac-sub -f
 ```
 
 ## Construcción del paquete

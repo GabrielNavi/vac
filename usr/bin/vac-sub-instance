@@ -1,0 +1,171 @@
+#!/bin/bash
+# vac-sub-instance — Gestión del ciclo de vida de sub-instancias VAC.
+#
+# Uso:
+#   vac-sub-instance --create NAME --vas URL
+#       Crea /etc/vac/vac.sub/NAME/ con vac.conf basado en conf-defaults y
+#       VAS_HOST apuntando a URL. Crea también los subdirectorios estándar.
+#
+#   vac-sub-instance --delete NAME
+#       Elimina /etc/vac/vac.sub/NAME/ y /var/lib/vac/sub/NAME/.
+#       Aborta si vac-sub NAME parece estar en ejecución.
+#
+#   vac-sub-instance --list
+#       Lista sub-instancias configuradas: nombre, VAS_HOST y estado.
+#
+# Estado reportado en --list:
+#   activa  — proceso vac-sub corriendo en este momento
+#   parada  — existe estado en /var/lib/vac/sub/NAME/ pero no corre
+#   nueva   — nunca ha arrancado (sin estado)
+
+set -euo pipefail
+
+DEFAULTS_FILE="/usr/share/vac/vac.conf.defaults"
+SUB_CONF_DIR="/etc/vac/vac.sub"
+SUB_STATE_DIR="/var/lib/vac/sub"
+
+# ---------------------------------------------------------------------------
+# Uso
+# ---------------------------------------------------------------------------
+usage() {
+    cat >&2 <<'EOF'
+Uso:
+  vac-sub-instance --create NAME --vas URL
+  vac-sub-instance --delete NAME
+  vac-sub-instance --list
+EOF
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Argumentos
+# ---------------------------------------------------------------------------
+ACTION=""
+NAME=""
+VAS_URL=""
+
+[[ $# -eq 0 ]] && usage
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --create)
+            ACTION="create"
+            [[ -z "${2:-}" ]] && { echo "Error: --create requiere NAME." >&2; exit 1; }
+            NAME="$2"; shift 2 ;;
+        --delete)
+            ACTION="delete"
+            [[ -z "${2:-}" ]] && { echo "Error: --delete requiere NAME." >&2; exit 1; }
+            NAME="$2"; shift 2 ;;
+        --list)
+            ACTION="list"; shift ;;
+        --vas)
+            [[ -z "${2:-}" ]] && { echo "Error: --vas requiere URL." >&2; exit 1; }
+            VAS_URL="$2"; shift 2 ;;
+        *) echo "Opción desconocida: $1" >&2; usage ;;
+    esac
+done
+
+[[ -z "$ACTION" ]] && usage
+
+# ---------------------------------------------------------------------------
+# --create
+# ---------------------------------------------------------------------------
+if [[ "$ACTION" == "create" ]]; then
+    [[ "$NAME" =~ ^[a-zA-Z0-9_-]+$ ]] \
+        || { echo "Error: NAME solo puede contener letras, dígitos, - y _." >&2; exit 1; }
+    [[ -z "$VAS_URL" ]] \
+        && { echo "Error: --create requiere --vas URL." >&2; exit 1; }
+    [[ ! -f "$DEFAULTS_FILE" ]] \
+        && { echo "Error: no se encuentra $DEFAULTS_FILE." >&2; exit 1; }
+
+    INSTANCE_DIR="${SUB_CONF_DIR}/${NAME}"
+    if [[ -d "$INSTANCE_DIR" ]]; then
+        echo "Error: sub-instancia '$NAME' ya existe en $INSTANCE_DIR" >&2
+        exit 1
+    fi
+
+    mkdir -p "${INSTANCE_DIR}/vac.conf.d"
+    mkdir -p "${INSTANCE_DIR}/extras_imperative.d"
+    mkdir -p "${INSTANCE_DIR}/extras_informative.d"
+
+    sed \
+        -e "s|^# Fichero de referencia.*|# Sub-instancia: ${NAME} — generado por vac-sub-instance|" \
+        -e "s|^# Configuración activa:.*|# Hereda /etc/vac/vac.conf; edita este fichero para sobreescribir.|" \
+        -e "s|^# Sobreescrituras:.*|# Sobreescrituras adicionales: ${INSTANCE_DIR}/vac.conf.d/*.conf|" \
+        -e "s|^VAS_HOST=.*|VAS_HOST=\"${VAS_URL}\"|" \
+        "$DEFAULTS_FILE" > "${INSTANCE_DIR}/vac.conf"
+
+    echo "Sub-instancia '${NAME}' creada en ${INSTANCE_DIR}."
+    echo "  VAS_HOST:  ${VAS_URL}"
+    echo "  vac.conf:  ${INSTANCE_DIR}/vac.conf"
+    echo ""
+    echo "Para activar:"
+    echo "  Si PARALLELIZATION=true en /etc/vac/vac.conf:"
+    echo "    systemctl restart vac.service"
+    echo "  Con supervisor independiente:"
+    echo "    systemctl restart vac-sub.service"
+fi
+
+# ---------------------------------------------------------------------------
+# --delete
+# ---------------------------------------------------------------------------
+if [[ "$ACTION" == "delete" ]]; then
+    INSTANCE_DIR="${SUB_CONF_DIR}/${NAME}"
+    STATE_DIR="${SUB_STATE_DIR}/${NAME}"
+
+    if [[ ! -d "$INSTANCE_DIR" ]]; then
+        echo "Error: sub-instancia '$NAME' no encontrada en $INSTANCE_DIR" >&2
+        exit 1
+    fi
+
+    if pgrep -f "vac-sub ${NAME}$" >/dev/null 2>&1; then
+        echo "Error: vac-sub '${NAME}' parece estar en ejecución." >&2
+        echo "       Detén el servicio antes de eliminar la sub-instancia." >&2
+        exit 1
+    fi
+
+    rm -rf "$INSTANCE_DIR"
+    echo "Configuración eliminada: ${INSTANCE_DIR}"
+
+    if [[ -d "$STATE_DIR" ]]; then
+        rm -rf "$STATE_DIR"
+        echo "Estado eliminado:        ${STATE_DIR}"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# --list
+# ---------------------------------------------------------------------------
+if [[ "$ACTION" == "list" ]]; then
+    found=0
+    for instance_dir in "${SUB_CONF_DIR}"/*/; do
+        [[ -d "$instance_dir" && -f "${instance_dir}/vac.conf" ]] && (( ++found )) || true
+    done
+
+    if [[ "$found" -eq 0 ]]; then
+        echo "Sin sub-instancias configuradas en ${SUB_CONF_DIR}."
+        exit 0
+    fi
+
+    printf "%-20s %-42s %s\n" "NOMBRE" "VAS_HOST" "ESTADO"
+    printf "%-20s %-42s %s\n" "------" "--------" "------"
+
+    for instance_dir in "${SUB_CONF_DIR}"/*/; do
+        [[ -d "$instance_dir" ]] || continue
+        name="$(basename "$instance_dir")"
+        [[ -f "${instance_dir}/vac.conf" ]] || continue
+
+        vas_host="$(grep -m1 '^VAS_HOST' "${instance_dir}/vac.conf" \
+            | cut -d= -f2- | tr -d '"' | xargs 2>/dev/null || echo '?')"
+
+        if pgrep -f "vac-sub ${name}$" >/dev/null 2>&1; then
+            status="activa"
+        elif [[ -d "${SUB_STATE_DIR}/${name}" ]]; then
+            status="parada"
+        else
+            status="nueva"
+        fi
+
+        printf "%-20s %-42s %s\n" "$name" "$vas_host" "$status"
+    done
+fi

@@ -1,6 +1,10 @@
 usr/bin/vac usr/bin/
 usr/bin/vac-register usr/bin/
+usr/bin/vac-sub usr/bin/
+usr/bin/vac-sub-manager usr/bin/
+usr/bin/vac-sub-instance usr/bin/
 usr/lib/vac/vac-common.sh usr/lib/vac/
 etc/vac/vac.conf etc/vac/
 lib/systemd/system/vac.service lib/systemd/system/
+lib/systemd/system/vac-sub.service lib/systemd/system/
 usr/share/vac/vac.conf.defaults usr/share/vac/

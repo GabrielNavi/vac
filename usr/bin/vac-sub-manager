@@ -1,0 +1,101 @@
+#!/bin/bash
+# vac-sub-manager — Supervisor de sub-instancias VAC.
+#
+# Escanea /etc/vac/vac.sub/*/ y lanza un proceso vac-sub <name> por cada
+# carpeta que contenga vac.conf. Monitoriza los procesos hijo y los reinicia
+# si mueren. Reporta eventos de ciclo de vida al journal con prefijo [VAC] [PARALLEL].
+#
+# Puede correr de dos maneras:
+#   - Como hijo de vac (PARALLELIZATION=true): sus logs van al journal de vac.service.
+#   - Como servicio independiente (vac-sub.service): sus logs van a vac-sub.service.
+#
+# Guarda contra doble arranque: si ya existe una instancia viva, sale sin hacer nada.
+#
+# Journalctl:
+#   journalctl -u vac     | grep '\[PARALLEL\]'   # cuando lo lanza vac
+#   journalctl -u vac-sub | grep '\[PARALLEL\]'   # cuando corre standalone
+
+set -euo pipefail
+
+LOG_TAG="[VAC]"
+source /usr/lib/vac/vac-common.sh
+load_all_conf
+
+SUB_DIR="/etc/vac/vac.sub"
+PIDFILE="/var/lib/vac/vac-sub-manager.pid"
+
+# ---------------------------------------------------------------------------
+# Guarda contra doble arranque
+# ---------------------------------------------------------------------------
+if [[ -f "$PIDFILE" ]]; then
+    old_pid="$(cat "$PIDFILE" 2>/dev/null || echo "")"
+    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+        log "[PARALLEL] vac-sub-manager ya está corriendo (PID $old_pid). Saliendo."
+        exit 0
+    fi
+fi
+echo $$ > "$PIDFILE"
+
+# ---------------------------------------------------------------------------
+# Señales: propagar SIGTERM/SIGINT a todos los hijos y limpiar pidfile
+# ---------------------------------------------------------------------------
+declare -A CHILD_PIDS
+
+cleanup() {
+    log "[PARALLEL] Cerrando sub-instancias..."
+    for name in "${!CHILD_PIDS[@]}"; do
+        kill "${CHILD_PIDS[$name]}" 2>/dev/null || true
+    done
+    wait 2>/dev/null || true
+    rm -f "$PIDFILE"
+    exit 0
+}
+trap cleanup SIGTERM SIGINT
+
+# ---------------------------------------------------------------------------
+# Lanzar sub-instancias
+# ---------------------------------------------------------------------------
+if [[ ! -d "$SUB_DIR" ]]; then
+    log "[PARALLEL] Directorio de sub-instancias no encontrado: $SUB_DIR"
+    rm -f "$PIDFILE"
+    exit 0
+fi
+
+launched=0
+for instance_dir in "$SUB_DIR"/*/; do
+    [[ -d "$instance_dir" ]] || continue
+    name="$(basename "$instance_dir")"
+    [[ -f "${instance_dir}/vac.conf" ]] || continue
+
+    vas_host="$(grep -m1 '^VAS_HOST' "${instance_dir}/vac.conf" \
+        | cut -d= -f2- | tr -d '"' | xargs 2>/dev/null || echo '?')"
+
+    vac-sub "$name" &
+    CHILD_PIDS[$name]=$!
+    log "[PARALLEL] Lanzado ${name}-vac, apuntando a ${vas_host} (PID ${CHILD_PIDS[$name]})"
+    (( ++launched ))
+done
+
+if [[ $launched -eq 0 ]]; then
+    log "[PARALLEL] Sin sub-instancias configuradas en $SUB_DIR"
+    rm -f "$PIDFILE"
+    exit 0
+fi
+
+log "[PARALLEL] $launched sub-instancia(s) activa(s)."
+
+# ---------------------------------------------------------------------------
+# Bucle de supervisión: revisa cada 30s si algún hijo ha muerto
+# ---------------------------------------------------------------------------
+while true; do
+    sleep 30
+    for name in "${!CHILD_PIDS[@]}"; do
+        pid="${CHILD_PIDS[$name]}"
+        if ! kill -0 "$pid" 2>/dev/null; then
+            log "[PARALLEL] ${name}-vac se ha congelado (PID $pid), reiniciando..."
+            vac-sub "$name" &
+            CHILD_PIDS[$name]=$!
+            log "[PARALLEL] ${name}-vac relanzado (PID ${CHILD_PIDS[$name]})"
+        fi
+    done
+done

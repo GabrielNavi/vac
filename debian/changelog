@@ -1,3 +1,36 @@
+vx-dga-l-vac (1.0-2~rc) unstable; urgency=medium
+
+  * Paralelización: soporte de múltiples sub-instancias VAC en un mismo equipo,
+    cada una registrando en un VAS diferente con UUID propio.
+  * PARALLELIZATION=false (nueva variable en vac.conf): si true, vac arranca
+    vac-sub-manager en background al iniciarse y reporta [PARALLEL] al journal.
+  * usr/bin/vac-sub-manager: supervisor de sub-instancias. Escanea
+    /etc/vac/vac.sub/*/, lanza vac-sub <name> por cada carpeta con vac.conf,
+    monitoriza los procesos hijo cada 30 s y los reinicia si mueren. Propaga
+    SIGTERM/SIGINT a todos los hijos. Guarda contra doble arranque mediante
+    pidfile en /var/lib/vac/vac-sub-manager.pid.
+  * usr/bin/vac-sub: bucle VAC completo para una sub-instancia. Recibe <name>
+    como argumento; deriva todas las rutas antes de sourcear vac-common.sh.
+    Hereda /etc/vac/vac.conf y sobreescribe con /etc/vac/vac.sub/<name>/vac.conf
+    (y vac.conf.d/). UUID v5 determinista: uuidgen --sha1 --namespace <base-uuid>
+    --name <name>; el mismo equipo y nombre producen siempre el mismo UUID en VAS.
+    Estado en /var/lib/vac/sub/<name>/. Prefijo de log: [NAME-VAC].
+  * lib/systemd/system/vac-sub.service: servicio independiente de vac.service.
+    Útil cuando se requieren sub-instancias sin instancia principal.
+  * vac-register --name <name>: redirige la operación a la sub-instancia indicada
+    sin tocar el estado de la instancia principal.
+  * vac-common.sh: EXTRAS_*_HOOKS_DIR ahora usan el patrón :- para que vac-sub
+    pueda pre-definirlos antes de sourcear la librería.
+  * usr/bin/vac-sub-instance: gestión del ciclo de vida de sub-instancias.
+    --create NAME --vas URL: crea /etc/vac/vac.sub/NAME/ con vac.conf basado
+    en vac.conf.defaults y VAS_HOST apuntando a la URL indicada; genera
+    vac.conf.d/, extras_imperative.d/ y extras_informative.d/.
+    --delete NAME: elimina configuración y estado; aborta si el proceso está activo.
+    --list: muestra nombre, VAS_HOST y estado (activa/parada/nueva) de cada instancia.
+  * postinst: crea /etc/vac/vac.sub y /var/lib/vac/sub.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Tue, 27 May 2026 18:00:00 +0200
+
 vx-dga-l-vac (1.0-1~rc) unstable; urgency=medium
 
   * Sistema de extras multi-fuente con estado por clave (extras_imperative.json /

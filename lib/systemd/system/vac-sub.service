@@ -1,0 +1,13 @@
+[Unit]
+Description=Vitalinux Autoregistration Client — Sub-instance Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/vac-sub-manager
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
