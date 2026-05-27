@@ -1,4 +1,4 @@
-vx-dga-l-vac (1.0-1~rc) unstable; urgency=medium
+vx-dga-l-vac (0.9-9~rc) unstable; urgency=medium
 
   * Sistema de extras multi-fuente con estado por clave (extras_imperative.json /
     extras_informative.json en /var/lib/vac/).
