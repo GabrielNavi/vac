@@ -5,6 +5,8 @@ echo "[VAC] Ejecutando postinst..."
 
 mkdir -p /etc/vac
 mkdir -p /etc/vac/vac.conf.d
+mkdir -p /etc/vac/extras_imperative.d
+mkdir -p /etc/vac/extras_informative.d
 mkdir -p /var/lib/vac
 mkdir -p /var/log/vac
 

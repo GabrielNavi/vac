@@ -1,3 +1,35 @@
+vx-dga-l-vac (1.0-1~rc) unstable; urgency=medium
+
+  * Sistema de extras multi-fuente con estado por clave (extras_imperative.json /
+    extras_informative.json en /var/lib/vac/).
+    - Cada productor gestiona su propia clave de forma independiente: los
+      productores cíclicos y delegados coexisten sin pisarse.
+    - Estructura interna por clave: { "key": { "timestamp": "YYYYMMDDHHMMSS",
+      "data": {...} } }. El merge enviado a VAS solo contiene .data; los metadatos
+      no trascienden el estado local.
+  * EXTRAS_IMPERATIVE_HOOKS_DIR / EXTRAS_INFORMATIVE_HOOKS_DIR: directorios de
+    hooks cíclicos. VAC ejecuta en orden léxico todos los scripts ejecutables;
+    la clave es el basename sin extensión ("10-cups.sh" → "10-cups"). Sustituye
+    EXTRA_IMPERATIVE_SCRIPT / EXTRA_INFORMATIVE_SCRIPT (eliminadas).
+  * EXTRAS_TTL: TTL en segundos por clave. Las claves cuyo timestamp supera el TTL
+    se eliminan del estado antes del merge, con aviso [WARN] en log. TTL=0 desactiva
+    la expiración. Sustituye la semántica COALESCE indefinida anterior.
+  * vac-register: nueva interfaz --imperative/--informative --key KEY { source | -d }.
+    Upserta o elimina una clave concreta del estado interno; el selfcheck compara
+    el merge resultante (sin timestamps) contra identity.json. Elimina la interfaz
+    anterior (--imperative <blob>).
+  * Eliminadas: EXEC_IMPERATIVE, EXEC_INFORMATIVE (el modo cycle/delegate ahora es
+    estructural: hooks dir = cycle, vac-register --key = delegate).
+  * postinst: crea /etc/vac/extras_imperative.d y /etc/vac/extras_informative.d.
+  * Compatible con VAS 0.9+: el formato del payload a VAS no cambia.
+  * vac-register: corregido guard de EXTRAS_ENABLED. Con EXTRAS_ENABLED=false,
+    las funciones upsert/delete/expire_extras/build_extras_merge no se invocan y
+    no se tocan los ficheros de estado. Si se pasó --key con EXTRAS_ENABLED=false,
+    se emite [WARN] y la operación se ignora; EXTRA_IMP/INF se fijan a {} directamente.
+    Comportamiento ahora simétrico con collect_extras() en el daemon.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Tue, 27 May 2026 12:00:00 +0200
+
 vx-dga-l-vac (0.9-5~rc) unstable; urgency=low
 
   * prerm: stop/disable solo en remove, no en upgrade (pariedad con VCD y veyon-sync).

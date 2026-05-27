@@ -1,24 +1,24 @@
 #!/bin/bash
-# vac-register — Registro puntual en VAS.
-#
-# Script de uso único que registra o actualiza este equipo en VAS.
-# Diseñado para ser invocado desde systemd timers, scripts de administración,
-# o procesos productores de datos extra (LDAP, CUPS, hardware, ...).
+# vac-register — Registro puntual en VAS con gestión de extras por clave.
 #
 # Uso:
-#   vac-register [--imperative <archivo|->] [--informative <archivo|->]
+#   vac-register
+#       Sin argumentos: selfcheck + registro si hay cambios. No toca extras.
 #
-# --imperative  <archivo|-> : JSON para extra_imperative (- = stdin).
-# --informative <archivo|-> : JSON para extra_informative (- = stdin).
+#   vac-register --imperative  --key KEY { - | /path/file }
+#   vac-register --informative --key KEY { - | /path/file }
+#       Upserta KEY en el fichero de estado del campo indicado con el JSON
+#       leído de stdin (-) o de archivo. Luego selfcheck + registro.
 #
-# Sin argumentos: extras enviados como null (COALESCE en VAS).
-# EXTRAS_ENABLED=false: ambos campos → {} (borrado explícito en VAS).
+#   vac-register --imperative  --key KEY -d
+#   vac-register --informative --key KEY -d
+#       Elimina KEY del fichero de estado del campo indicado. Luego selfcheck.
 #
-# Flujo:
-#   1. Selfcheck contra identity.json: hostname/IP/MAC y extras recibidos.
-#      Sin cambios → salida 0 sin registrar (idempotente).
-#   2. Con cambios o sin identity.json → POST /register.
-#      Escribe identity.json, VERSION_FILE y (SYNC_CLIENTS=true) clients.json.
+# Comportamiento:
+#   - Idempotente: si no hay cambios respecto a identity.json, salida 0 sin registrar.
+#   - Error de JSON o de escritura → WARN en log, clave no modificada, salida 1.
+#   - Tras cualquier operación sobre extras: expire_extras() limpia claves TTL vencidas.
+#   - El selfcheck compara el merge plano (sin timestamps) contra identity.json.
 
 set -euo pipefail
 
@@ -28,27 +28,33 @@ source /usr/lib/vac/vac-common.sh
 # ---------------------------------------------------------------------------
 # Argumentos
 # ---------------------------------------------------------------------------
-EXTRA_IMP_ARG=""
-EXTRA_INF_ARG=""
+FIELD=""     # "imperative" | "informative"
+KEY=""
+SOURCE=""    # "-" (stdin) | ruta de archivo
+DELETE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --imperative)
-            [[ -z "${2:-}" ]] && { log "Error: --imperative requiere un argumento."; exit 1; }
-            EXTRA_IMP_ARG="$2"
-            shift 2
-            ;;
-        --informative)
-            [[ -z "${2:-}" ]] && { log "Error: --informative requiere un argumento."; exit 1; }
-            EXTRA_INF_ARG="$2"
-            shift 2
-            ;;
-        *)
-            log "Argumento desconocido: $1"
-            exit 1
-            ;;
+        --imperative)  FIELD="imperative";  shift ;;
+        --informative) FIELD="informative"; shift ;;
+        --key)
+            [[ -z "${2:-}" ]] && { log "Error: --key requiere un argumento."; exit 1; }
+            KEY="$2"; shift 2 ;;
+        -d) DELETE=true; shift ;;
+        -)  SOURCE="-"; shift ;;
+        -*) log "Opción desconocida: $1"; exit 1 ;;
+        *)  SOURCE="$1"; shift ;;
     esac
 done
+
+# Validación
+if [[ -n "$FIELD" ]]; then
+    [[ -z "$KEY" ]] && { log "Error: --key es obligatorio con --imperative/--informative."; exit 1; }
+    if [[ "$DELETE" == "false" && -z "$SOURCE" ]]; then
+        log "Error: se requiere fuente JSON (- o ruta de archivo), o -d para borrar."
+        exit 1
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Inicialización
@@ -80,60 +86,67 @@ if [[ -z "$VAS_HOST" ]]; then
     exit 1
 fi
 
-if [[ "$EXTRA_IMP_ARG" == "-" && "$EXTRA_INF_ARG" == "-" ]]; then
-    log "Error: stdin (-) no puede usarse para --imperative y --informative a la vez."
-    exit 1
-fi
-
 # ---------------------------------------------------------------------------
-# read_extra_json: lee JSON desde archivo o stdin, normaliza y valida.
-# Devuelve "" y exit 0 ante cualquier error (campo omitido → COALESCE en VAS).
+# Extras: operación sobre clave, expiración y merge
+# Todas las funciones que tocan el estado de extras están condicionadas a
+# EXTRAS_ENABLED=true. Con false se envía {} directamente (borrado en VAS)
+# y no se toca ningún fichero de estado.
 # ---------------------------------------------------------------------------
-read_extra_json() {
-    local src="$1" label="$2"
-    [[ -z "$src" ]] && return 0
+if [[ "$EXTRAS_ENABLED" == "true" ]]; then
 
-    local raw
-    if [[ "$src" == "-" ]]; then
-        raw="$(cat)"
-    elif [[ -f "$src" ]]; then
-        raw="$(cat "$src")"
-    else
-        log "[$label] Archivo no encontrado: $src — omitiendo campo."
-        return 0
+    if [[ -n "$FIELD" ]]; then
+        EXTRAS_FILE="$EXTRAS_IMP_FILE"
+        [[ "$FIELD" == "informative" ]] && EXTRAS_FILE="$EXTRAS_INF_FILE"
+
+        if [[ "$DELETE" == "true" ]]; then
+            log "[EXTRAS] Eliminando clave '$KEY' de extra_${FIELD}."
+            delete_extra_key "$EXTRAS_FILE" "$KEY" \
+                || { log "[WARN] [EXTRAS] Error al eliminar clave '$KEY'."; exit 1; }
+            log "[EXTRAS] Clave '$KEY' eliminada."
+        else
+            raw=""
+            if [[ "$SOURCE" == "-" ]]; then
+                raw="$(cat)"
+            elif [[ -f "$SOURCE" ]]; then
+                raw="$(cat "$SOURCE")"
+            else
+                log "[WARN] [EXTRAS] Archivo no encontrado: $SOURCE — clave '$KEY' no modificada."
+                exit 1
+            fi
+
+            if [[ -z "$raw" ]]; then
+                log "[WARN] [EXTRAS] Entrada vacía para clave '$KEY' — clave no modificada."
+                exit 1
+            fi
+
+            data=""
+            if data="$(echo "$raw" | jq -c '.' 2>/dev/null)"; then
+                upsert_extra_key "$EXTRAS_FILE" "$KEY" "$data" \
+                    || { log "[WARN] [EXTRAS] Error escribiendo clave '$KEY' — fichero no modificado."; exit 1; }
+                log "[EXTRAS] Clave '$KEY' actualizada en extra_${FIELD}."
+            else
+                log "[WARN] [EXTRAS] Entrada para clave '$KEY' rechazada — JSON inválido. Clave no modificada."
+                exit 1
+            fi
+        fi
     fi
 
-    if [[ -z "$raw" ]]; then
-        log "[$label] Entrada vacía — omitiendo campo."
-        return 0
+    expire_extras "$EXTRAS_IMP_FILE"
+    expire_extras "$EXTRAS_INF_FILE"
+
+    EXTRA_IMP="$(build_extras_merge "$EXTRAS_IMP_FILE")"
+    EXTRA_INF="$(build_extras_merge "$EXTRAS_INF_FILE")"
+
+else
+    if [[ -n "$FIELD" ]]; then
+        log "[WARN] [EXTRAS] EXTRAS_ENABLED=false — operación sobre clave ignorada."
     fi
-
-    local normalized
-    normalized="$(echo "$raw" | jq -c 'to_entries | sort_by(.key) | from_entries' 2>/dev/null)" || {
-        log "[$label] JSON inválido — omitiendo campo."
-        return 0
-    }
-
-    local keys
-    keys="$(echo "$normalized" | jq 'keys | length' 2>/dev/null || echo '?')"
-    log "[$label] JSON leído: $keys clave(s)."
-    echo "$normalized"
-}
-
-# ---------------------------------------------------------------------------
-# Preparar extras según política de configuración
-# ---------------------------------------------------------------------------
-if [[ "$EXTRAS_ENABLED" != "true" ]]; then
-    # EXTRAS_ENABLED=false: forzar borrado explícito independientemente de los args.
-    # Garantiza que VAS ponga ambos campos a NULL aunque tuvieran valores previos.
     EXTRA_IMP="{}"
     EXTRA_INF="{}"
-    log "[EXTRA] EXTRAS_ENABLED=false → {} en ambos campos (borrado explícito en VAS)."
-else
-    EXTRA_IMP="$(read_extra_json "$EXTRA_IMP_ARG" "IMP")"
-    EXTRA_INF="$(read_extra_json "$EXTRA_INF_ARG" "INF")"
-    log_debug "[EXTRA] IMP: ${EXTRA_IMP:-(null/COALESCE)}  INF: ${EXTRA_INF:-(null/COALESCE)}"
+    log_debug "[EXTRA] EXTRAS_ENABLED=false → {} en ambos campos (borrado explícito en VAS)."
 fi
+
+log_debug "[EXTRA] IMP: ${EXTRA_IMP:-(null/COALESCE)}  INF: ${EXTRA_INF:-(null/COALESCE)}"
 
 # ---------------------------------------------------------------------------
 # Recopilar datos del equipo
@@ -154,8 +167,6 @@ if load_identity; then
     [[ "$LOC_MAC"  != "$IDENTITY_MAC"  ]] && { log "[SELFCHECK] MAC: '$IDENTITY_MAC' → '$LOC_MAC'";        mismatch=1; }
 
     if [[ "$EXTRAS_ENABLED" == "true" ]]; then
-        # Comparar solo si se recibió argumento (EXTRA_IMP!="").
-        # Sin argumento → null/COALESCE; no forzar registro.
         if [[ -n "$EXTRA_IMP" && "$EXTRA_IMP" != "$IDENTITY_IMP" ]]; then
             log "[SELFCHECK] extra_imperative cambió."
             mismatch=1

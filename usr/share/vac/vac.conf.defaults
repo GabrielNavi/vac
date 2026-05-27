@@ -23,28 +23,25 @@ CHECK_SECONDS=300
 SYNC_CLIENTS=true
 
 # Habilitar campos extra (extra_imperative / extra_informative) en el registro.
-# true  → VAC puede enviar datos extra a VAS (según EXEC_IMPERATIVE/EXEC_INFORMATIVE).
-# false → VAC envía {} en ambos campos (borrado explícito en VAS); ignora los scripts.
+# true  → VAC ejecuta hooks y envía el merge resultante a VAS.
+# false → VAC envía {} en ambos campos (borrado explícito en VAS); ignora hooks.
 EXTRAS_ENABLED=false
 
-# Modo de ejecución de extra_imperative (solo si EXTRAS_ENABLED=true).
-# cycle    → VAC ejecuta EXTRA_IMPERATIVE_SCRIPT en cada ciclo del bucle principal.
-# delegate → VAC envía null (COALESCE); delegar a vac-register con JSON externo.
-# EXEC_IMPERATIVE=cycle
+# TTL de claves extras en segundos (0 = sin expiración).
+# Una clave cuyo timestamp supere este valor se elimina del estado interno antes
+# del siguiente merge, con aviso en log. Útil para detectar productores silenciados.
+# EXTRAS_TTL=86400
 
-# Modo de ejecución de extra_informative (solo si EXTRAS_ENABLED=true).
-# cycle    → VAC ejecuta EXTRA_INFORMATIVE_SCRIPT en cada ciclo del bucle principal.
-# delegate → VAC envía null (COALESCE); delegar a vac-register con JSON externo.
-# EXEC_INFORMATIVE=cycle
-
-# Scripts externos de campos adicionales (opcional; requiere EXTRAS_ENABLED=true).
-# El script debe imprimir un objeto JSON válido en stdout y salir con código 0.
-# Si falla, devuelve JSON inválido o supera 10s, el campo se omite (null → COALESCE).
+# Directorios de hooks cíclicos (requiere EXTRAS_ENABLED=true).
+# VAC ejecuta en orden léxico todos los scripts ejecutables del directorio.
+# La clave de cada script es su basename sin extensión (ej: "10-cups.sh" → "cups").
+# Cada script debe imprimir un objeto JSON en stdout y salir con código 0.
+# En caso de error: WARN en log, la clave conserva su valor anterior (no destructivo).
 # extra_imperative  → cambios disparan bump_version en VAS (datos de red/gestión).
 # extra_informative → solo informativo, nunca dispara versión (inventario HW, etc.).
 #
-# EXTRA_IMPERATIVE_SCRIPT="/usr/lib/vac/extra-imperative.sh"
-# EXTRA_INFORMATIVE_SCRIPT="/usr/lib/vac/extra-informative.sh"
+# EXTRAS_IMPERATIVE_HOOKS_DIR=/etc/vac/extras_imperative.d
+# EXTRAS_INFORMATIVE_HOOKS_DIR=/etc/vac/extras_informative.d
 
 # Nivel de logging: no (silencio total), normal (eventos importantes), debug (detallado).
 # Filtrar mensajes debug en journalctl: journalctl -u vac | grep '\[DEBUG\]'

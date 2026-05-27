@@ -25,6 +25,8 @@ CLIENTS_FILE="${STATE_DIR}/clients.json"
 TMP_CLIENTS="${STATE_DIR}/clients.json.tmp"
 IDENTITY_FILE="${STATE_DIR}/identity.json"
 TMP_IDENTITY="${STATE_DIR}/identity.json.tmp"
+EXTRAS_IMP_FILE="${STATE_DIR}/extras_imperative.json"
+EXTRAS_INF_FILE="${STATE_DIR}/extras_informative.json"
 
 # ---------------------------------------------------------------------------
 # Valores por defecto de configuración
@@ -33,10 +35,9 @@ VAS_HOST=""
 RETRY_SECONDS=60
 CHECK_SECONDS=300
 EXTRAS_ENABLED=false
-EXEC_IMPERATIVE=cycle
-EXEC_INFORMATIVE=cycle
-EXTRA_IMPERATIVE_SCRIPT=""
-EXTRA_INFORMATIVE_SCRIPT=""
+EXTRAS_TTL=86400
+EXTRAS_IMPERATIVE_HOOKS_DIR="/etc/vac/extras_imperative.d"
+EXTRAS_INFORMATIVE_HOOKS_DIR="/etc/vac/extras_informative.d"
 SYNC_CLIENTS=true
 
 # ---------------------------------------------------------------------------
@@ -97,12 +98,11 @@ load_conf() {
             VAS_HOST)                 VAS_HOST="$val";                 (( ++loaded )) ;;
             RETRY_SECONDS)            RETRY_SECONDS="$val";            (( ++loaded )) ;;
             CHECK_SECONDS)            CHECK_SECONDS="$val";            (( ++loaded )) ;;
-            EXTRAS_ENABLED)           EXTRAS_ENABLED="$val";           (( ++loaded )) ;;
-            EXEC_IMPERATIVE)          EXEC_IMPERATIVE="$val";          (( ++loaded )) ;;
-            EXEC_INFORMATIVE)         EXEC_INFORMATIVE="$val";         (( ++loaded )) ;;
-            EXTRA_IMPERATIVE_SCRIPT)  EXTRA_IMPERATIVE_SCRIPT="$val";  (( ++loaded )) ;;
-            EXTRA_INFORMATIVE_SCRIPT) EXTRA_INFORMATIVE_SCRIPT="$val"; (( ++loaded )) ;;
-            SYNC_CLIENTS)             SYNC_CLIENTS="$val";             (( ++loaded )) ;;
+            EXTRAS_ENABLED)              EXTRAS_ENABLED="$val";              (( ++loaded )) ;;
+            EXTRAS_TTL)                  EXTRAS_TTL="$val";                  (( ++loaded )) ;;
+            EXTRAS_IMPERATIVE_HOOKS_DIR) EXTRAS_IMPERATIVE_HOOKS_DIR="$val"; (( ++loaded )) ;;
+            EXTRAS_INFORMATIVE_HOOKS_DIR) EXTRAS_INFORMATIVE_HOOKS_DIR="$val"; (( ++loaded )) ;;
+            SYNC_CLIENTS)                SYNC_CLIENTS="$val";                (( ++loaded )) ;;
             LOG_LEVEL)                LOG_LEVEL="$val";                (( ++loaded )) ;;
             LOG_FILE)                 LOG_FILE="$val";                 (( ++loaded )) ;;
         esac
@@ -320,4 +320,113 @@ download_clients() {
         rm -f "$TMP_CLIENTS"
         return 1
     fi
+}
+
+# ---------------------------------------------------------------------------
+# Gestión de extras multi-fuente
+# ---------------------------------------------------------------------------
+#
+# Estado interno: dos ficheros JSON en STATE_DIR con estructura por clave:
+#   { "key": { "timestamp": "YYYYMMDDHHMMSS", "data": { ... } }, ... }
+#
+# upsert_extra_key FILE KEY DATA_JSON
+#   Inserta o actualiza KEY con timestamp UTC y DATA_JSON como data.
+#   Escritura atómica. Claves ordenadas lexicalmente.
+#
+# delete_extra_key FILE KEY
+#   Elimina KEY del fichero. No-op si la clave o el fichero no existen.
+#
+# expire_extras FILE
+#   Elimina claves cuyo timestamp supera EXTRAS_TTL segundos.
+#   EXTRAS_TTL=0 → expiración desactivada.
+#
+# build_extras_merge FILE
+#   Devuelve JSON plano { key: data } para enviar a VAS (sin timestamps).
+#   Sin fichero  → "" (null → COALESCE en VAS)
+#   0 claves     → "{}" (borrado explícito)
+#   Con claves   → { key: data, ... }
+# ---------------------------------------------------------------------------
+
+upsert_extra_key() {
+    local file="$1" key="$2" data="$3"
+    local ts tmp current
+    # Timestamp formato YYYYMMDDHHMMSS — 14 dígitos, mismo espacio que la versión VAS.
+    ts="$(date -u +%Y%m%d%H%M%S)"
+    tmp="${file}.tmp"
+    current="{}"
+    [[ -f "$file" ]] && current="$(cat "$file")"
+
+    # Insertar/actualizar la clave y reordenar lexicalmente para diff determinista.
+    jq -c --arg key "$key" --arg ts "$ts" --argjson data "$data" \
+        '.[$key] = {"timestamp": $ts, "data": $data} | to_entries | sort_by(.key) | from_entries' \
+        <<< "$current" > "$tmp" \
+    && mv "$tmp" "$file" \
+    || { rm -f "$tmp"; return 1; }
+}
+
+delete_extra_key() {
+    local file="$1" key="$2" tmp
+    [[ ! -f "$file" ]] && return 0
+    tmp="${file}.tmp"
+    jq -c --arg key "$key" \
+        'del(.[$key]) | to_entries | sort_by(.key) | from_entries' \
+        "$file" > "$tmp" \
+    && mv "$tmp" "$file" \
+    || { rm -f "$tmp"; return 1; }
+}
+
+expire_extras() {
+    local file="$1"
+    [[ ! -f "$file" ]] && return 0
+    # TTL=0 desactiva la expiración por diseño explícito.
+    [[ "${EXTRAS_TTL:-0}" -eq 0 ]] && return 0
+
+    local now key ts ts_epoch age
+    now="$(date +%s)"
+    local expired=()
+
+    while IFS= read -r key; do
+        [[ -z "$key" ]] && continue
+        ts="$(jq -r --arg k "$key" '.[$k].timestamp // empty' "$file" 2>/dev/null)"
+        # Ignorar entradas con timestamp ausente o formato incorrecto.
+        [[ -z "$ts" || ! "$ts" =~ ^[0-9]{14}$ ]] && continue
+        # Convertir YYYYMMDDHHMMSS → epoch para comparar con el reloj actual.
+        ts_epoch="$(date -d "${ts:0:4}-${ts:4:2}-${ts:6:2} ${ts:8:2}:${ts:10:2}:${ts:12:2}" +%s 2>/dev/null)" || continue
+        age=$(( now - ts_epoch ))
+        if [[ "$age" -gt "$EXTRAS_TTL" ]]; then
+            log "[WARN] [EXTRAS] Clave '$key' expirada (${age}s > TTL ${EXTRAS_TTL}s) — eliminada."
+            expired+=("$key")
+        fi
+    done < <(jq -r 'keys[]' "$file" 2>/dev/null)
+
+    [[ "${#expired[@]}" -eq 0 ]] && return 0
+
+    local tmp="${file}.tmp"
+    # Construir array JSON de claves a eliminar y pasarlo como argumento a jq
+    # para evitar inyección si los nombres contienen caracteres especiales.
+    local keys_json
+    keys_json="$(printf '%s\n' "${expired[@]}" | jq -R . | jq -sc .)"
+    jq -c --argjson keys "$keys_json" \
+        'del(.[$keys[]]) | to_entries | sort_by(.key) | from_entries' \
+        "$file" > "$tmp" \
+    && mv "$tmp" "$file" \
+    || { rm -f "$tmp"; return 1; }
+}
+
+build_extras_merge() {
+    local file="$1"
+    # Sin fichero: null → VAS aplica COALESCE (conserva valor previo en BD).
+    if [[ ! -f "$file" ]]; then
+        echo ""
+        return 0
+    fi
+    local count
+    count="$(jq 'keys | length' "$file" 2>/dev/null || echo 0)"
+    # Fichero vacío (0 claves): {} → VAS pone NULL explícito en BD.
+    if [[ "$count" -eq 0 ]]; then
+        echo "{}"
+        return 0
+    fi
+    # Con claves: extraer solo .data de cada entrada, sin los metadatos internos.
+    jq -c 'to_entries | map({key: .key, value: .value.data}) | from_entries' "$file" 2>/dev/null || echo ""
 }

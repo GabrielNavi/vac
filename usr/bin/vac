@@ -52,8 +52,7 @@ log "VAS_HOST:       ${VAS_HOST:-'(no definido)'}"
 log "CHECK:          ${CHECK_SECONDS}s"
 log "RETRY:          ${RETRY_SECONDS}s"
 log "EXTRAS_ENABLED: $EXTRAS_ENABLED"
-log "EXEC_IMP:       $EXEC_IMPERATIVE"
-log "EXEC_INF:       $EXEC_INFORMATIVE"
+log "EXTRAS_TTL:     ${EXTRAS_TTL}s"
 log "SYNC_CLIENTS:   $SYNC_CLIENTS"
 log "STATE_DIR:      $STATE_DIR"
 
@@ -65,43 +64,46 @@ EXTRA_IMP=""
 EXTRA_INF=""
 
 # ---------------------------------------------------------------------------
-# run_extra_script: ejecuta un script extra y devuelve JSON normalizado.
-# Devuelve "" y exit 0 si no está configurado, falla, o produce JSON inválido.
-# En esos casos el campo se envía como null a VAS (COALESCE: conserva valor).
+# _run_extras_hooks DIR FILE LABEL
+# Ejecuta todos los scripts ejecutables de DIR en orden léxico.
+# Por cada script: si produce JSON válido con exit 0, upserta la clave
+# (basename sin extensión). Errores → WARN, clave no modificada.
 # ---------------------------------------------------------------------------
-run_extra_script() {
-    local script="$1"
-    [[ -z "$script" ]] && return 0
+_run_extras_hooks() {
+    local dir="$1" file="$2" label="$3"
+    [[ ! -d "$dir" ]] && return 0
 
-    if [[ ! -x "$script" ]]; then
-        log "[EXTRA] Script no ejecutable: $script — omitiendo campo."
-        return 0
-    fi
+    local hook key output normalized
+    for hook in "$dir"/*; do
+        [[ -f "$hook" && -x "$hook" ]] || continue
+        # La clave es el basename sin extensión: "10-cups.sh" → "10-cups".
+        key="$(basename "$hook")"
+        key="${key%.*}"
 
-    local output
-    output="$(timeout 10 "$script" 2>/dev/null)" || {
-        log "[EXTRA] Script falló o superó timeout (10s): $script — omitiendo campo."
-        return 0
-    }
-
-    local normalized
-    normalized="$(echo "$output" | jq -c 'to_entries | sort_by(.key) | from_entries' 2>/dev/null)" || {
-        log "[EXTRA] Salida de $script no es JSON válido — omitiendo campo."
-        return 0
-    }
-
-    echo "$normalized"
+        if output="$(timeout 10 "$hook" 2>/dev/null)"; then
+            if [[ -z "$output" ]]; then
+                log_debug "[$label] Hook '$(basename "$hook")': sin salida — clave '$key' no actualizada."
+                continue
+            fi
+            if normalized="$(echo "$output" | jq -c '.' 2>/dev/null)"; then
+                upsert_extra_key "$file" "$key" "$normalized" \
+                    && log_debug "[$label] Clave '$key' actualizada." \
+                    || log "[WARN] [EXTRAS] Error escribiendo clave '$key'."
+            else
+                log "[WARN] [EXTRAS] Hook '$(basename "$hook")' salida no es JSON válido — clave '$key' no actualizada."
+            fi
+        else
+            log "[WARN] [EXTRAS] Hook cíclico '$(basename "$hook")' falló — clave '$key' no actualizada."
+        fi
+    done
 }
 
 # ---------------------------------------------------------------------------
-# collect_extras: rellena EXTRA_IMP y EXTRA_INF según política de configuración.
+# collect_extras: ejecuta hooks cíclicos, expira claves TTL y construye
+# EXTRA_IMP / EXTRA_INF como JSON plano para enviar a VAS.
 #
-#   EXTRAS_ENABLED=false → "{}" en ambos (borrado explícito en VAS; limpia
-#                          cualquier valor previo almacenado en la BD).
-#   EXEC_*=cycle         → ejecutar script; "" en fallo (null → COALESCE:
-#                          VAS conserva el valor existente ante fallos transitorios).
-#   EXEC_*=delegate      → "" (null → COALESCE; vac-register es quien aporta
-#                          el JSON cuando el proceso productor lo invoca).
+#   EXTRAS_ENABLED=false → "{}" en ambos (borrado explícito en VAS).
+#   EXTRAS_ENABLED=true  → hooks → expire → merge.
 # ---------------------------------------------------------------------------
 collect_extras() {
     if [[ "$EXTRAS_ENABLED" != "true" ]]; then
@@ -111,21 +113,14 @@ collect_extras() {
         return
     fi
 
-    if [[ "$EXEC_IMPERATIVE" == "cycle" ]]; then
-        EXTRA_IMP="$(run_extra_script "$EXTRA_IMPERATIVE_SCRIPT")"
-    else
-        # delegate: VAC envía null para que VAS aplique COALESCE.
-        # El proceso externo que tenga los datos llamará a vac-register.
-        EXTRA_IMP=""
-        log_debug "[EXTRA] extra_imperative: delegate → null (COALESCE en VAS)."
-    fi
+    _run_extras_hooks "$EXTRAS_IMPERATIVE_HOOKS_DIR"  "$EXTRAS_IMP_FILE" "IMP"
+    _run_extras_hooks "$EXTRAS_INFORMATIVE_HOOKS_DIR" "$EXTRAS_INF_FILE" "INF"
 
-    if [[ "$EXEC_INFORMATIVE" == "cycle" ]]; then
-        EXTRA_INF="$(run_extra_script "$EXTRA_INFORMATIVE_SCRIPT")"
-    else
-        EXTRA_INF=""
-        log_debug "[EXTRA] extra_informative: delegate → null (COALESCE en VAS)."
-    fi
+    expire_extras "$EXTRAS_IMP_FILE"
+    expire_extras "$EXTRAS_INF_FILE"
+
+    EXTRA_IMP="$(build_extras_merge "$EXTRAS_IMP_FILE")"
+    EXTRA_INF="$(build_extras_merge "$EXTRAS_INF_FILE")"
 }
 
 # ---------------------------------------------------------------------------
@@ -158,12 +153,11 @@ selfcheck_local() {
     [[ "$LOC_IP"   != "$IDENTITY_IP"   ]] && { log "[SELFCHECK] IP: '$IDENTITY_IP' → '$LOC_IP'";           mismatch=1; }
     [[ "$LOC_MAC"  != "$IDENTITY_MAC"  ]] && { log "[SELFCHECK] MAC: '$IDENTITY_MAC' → '$LOC_MAC'";        mismatch=1; }
 
-    if [[ "$EXTRAS_ENABLED" == "true" && "$EXEC_IMPERATIVE" == "cycle" ]]; then
+    if [[ "$EXTRAS_ENABLED" == "true" ]]; then
         # Solo extra_imperative dispara registro: es el único campo que sube versión en VAS.
-        # extra_informative es puramente informativo y nunca provoca bump_version,
-        # por lo que su cambio no justifica interrumpir el ciclo de heartbeat.
-        # Comparar solo si el script produjo salida (EXTRA_IMP!=""):
-        # script fallido → "" → COALESCE en VAS, sin forzar registro innecesario.
+        # extra_informative es puramente informativo.
+        # Comparar solo si el merge produjo datos (EXTRA_IMP != ""):
+        # fichero sin claves o no existente → "" → COALESCE en VAS, sin forzar registro.
         if [[ -n "$EXTRA_IMP" && "$EXTRA_IMP" != "$IDENTITY_IMP" ]]; then
             log "[SELFCHECK] extra_imperative cambió."
             mismatch=1

@@ -25,7 +25,7 @@ vx-dga-l-veyon-sync   → integración Veyon opcional
 ## Información del paquete
 
 - Nombre: `vx-dga-l-vac`
-- Versión: 0.9-4~rc
+- Versión: 1.0-1~rc
 - Arquitectura: all
 - Mantenedor: Gabriel Navia \<correos@gabrielnav.es\>
 - Licencia: Apache 2.0
@@ -36,7 +36,7 @@ vx-dga-l-veyon-sync   → integración Veyon opcional
 |---|---|
 | `usr/bin/vac` | Script Bash del servicio en bucle |
 | `usr/bin/vac-register` | Script de registro puntual |
-| `usr/lib/vac/vac-common.sh` | Librería compartida: log, log_debug, registro, red, identidad |
+| `usr/lib/vac/vac-common.sh` | Librería compartida: log, registro, red, identidad, extras |
 | `etc/vac/vac.conf` | Configuración editable |
 | `lib/systemd/system/vac.service` | Unidad systemd |
 | `usr/share/vac/vac.conf.defaults` | Referencia de valores por defecto (solo lectura) |
@@ -49,6 +49,8 @@ vx-dga-l-veyon-sync   → integración Veyon opcional
 | `/var/lib/vac/version` | Última versión del registro recibida de VAS |
 | `/var/lib/vac/identity.json` | Datos propios tal como fueron enviados a VAS por última vez |
 | `/var/lib/vac/clients.json` | Copia local del inventario completo (`SYNC_CLIENTS=true`) |
+| `/var/lib/vac/extras_imperative.json` | Estado interno de extras imperativos por clave |
+| `/var/lib/vac/extras_informative.json` | Estado interno de extras informativos por clave |
 
 ## Flujo de operación
 
@@ -56,33 +58,30 @@ vx-dga-l-veyon-sync   → integración Veyon opcional
 
 ```
 Esperar VAS_HOST definido
-→ POST /register  (datos completos + extras según config)
+→ Ejecutar hooks de extras (si EXTRAS_ENABLED=true)
+→ Expirar claves TTL vencidas
+→ POST /register  (datos completos + merge de extras)
 → Guardar identity.json (datos locales enviados)
 → Inicializar VERSION_FILE con versión remota
 → Si SYNC_CLIENTS=true: GET /clients → clients.json
 → GET /clients/{UUID} → refrescar identity.json con valores confirmados por VAS
-  (necesario si VAS aplicó COALESCE sobre extras de un registro anterior)
 → Entrar en el bucle principal
 ```
 
 ### Bucle principal
 
 ```
-1. Recopilar hostname/IP/MAC y extras (según EXTRAS_ENABLED y EXEC_*)
-
-2. Selfcheck local: comparar con identity.json
+1. Ejecutar hooks de extras → expirar TTL → construir merge
+2. Selfcheck local: comparar merge plano con identity.json
    Sin cambios → POST /heartbeat ({id}, ~50 B; actualiza last_seen en VAS)
                   Si VAS devuelve 404 → re-registro automático
    Con cambios → POST /register; guardar identity.json
-
 3. GET /version → comparar con versión local
    Sin cambios → sleep CHECK_SECONDS, siguiente ciclo
-
 4. Nueva versión detectada:
    Si SYNC_CLIENTS=true → GET /clients → clients.json
    GET /clients/{UUID}  → identity.json (reflejo desde VAS)
    Actualizar VERSION_FILE
-
 5. sleep CHECK_SECONDS
 ```
 
@@ -92,23 +91,78 @@ El `POST /heartbeat` del paso 2 actualiza `last_seen` en VAS en cada ciclo aunqu
 
 ## vac-register
 
-Script de registro puntual. Idempotente: compara con `identity.json` y omite el registro si no hay cambios.
+Script de registro puntual. Idempotente: compara el merge actual con `identity.json` y omite el registro si no hay cambios.
 
 ```bash
-# Registro sin extras (null → COALESCE en VAS)
+# Registro sin tocar extras
 vac-register
 
-# Extras desde archivo
-vac-register --imperative /tmp/extra-imp.json
+# Upsert de clave imperativa desde archivo
+vac-register --imperative --key cups /tmp/cups.json
 
-# Extras desde stdin
-echo '{"cups_server":"10.0.0.2"}' | vac-register --informative -
+# Upsert de clave imperativa desde stdin
+echo '{"server":"10.0.0.2"}' | vac-register --imperative --key cups -
 
-# Ambos campos
-vac-register --imperative /tmp/imp.json --informative /tmp/inf.json
+# Eliminar una clave
+vac-register --imperative --key cups -d
+
+# Clave informativa
+vac-register --informative --key hardware /tmp/hw.json
 ```
 
 Tras un registro exitoso escribe `identity.json`, `VERSION_FILE` y `clients.json` (si `SYNC_CLIENTS=true`).
+
+## Sistema de extras multi-fuente
+
+Los campos `extra_imperative` y `extra_informative` se gestionan mediante un **estado interno por clave** en `STATE_DIR`. Cada productor gestiona su propia clave de forma independiente.
+
+### Estado interno
+
+```json
+{
+  "cups": {
+    "timestamp": "20260525103000",
+    "data": { "server": "10.0.0.2" }
+  },
+  "hardware": {
+    "timestamp": "20260525103200",
+    "data": { "ram": "8GB", "cpu": "Intel i5-8250U" }
+  }
+}
+```
+
+### Merge enviado a VAS
+
+Solo el campo `.data` de cada clave; los timestamps no trascienden el estado local:
+
+```json
+{
+  "cups":     { "server": "10.0.0.2" },
+  "hardware": { "ram": "8GB", "cpu": "Intel i5-8250U" }
+}
+```
+
+### Fuentes de datos
+
+| Fuente | Mecanismo | Clave asignada |
+|---|---|---|
+| Hook cíclico | Script ejecutable en `extras_imperative.d/` | Basename sin extensión |
+| Productor externo | `vac-register --imperative --key KEY` | Valor de `--key` |
+
+Ambas fuentes coexisten en el mismo fichero de estado y se mezclan en cada merge.
+
+### TTL de claves
+
+Con `EXTRAS_TTL=86400`, una clave sin actualizar durante más de 24 horas se elimina del estado antes del siguiente merge, con aviso `[WARN]` en log. Útil para detectar productores silenciados sin borrar manualmente.
+
+### Semántica de envío a VAS
+
+| Situación | Valor enviado | Efecto en BD |
+|---|---|---|
+| Merge con claves vigentes | `{"k": {...}}` | Sobreescribe el campo |
+| Fichero de estado no existe | `null` | COALESCE: conserva valor existente |
+| Fichero de estado vacío (0 claves) | `{}` | Borra el campo (NULL en BD) |
+| `EXTRAS_ENABLED=false` | `{}` | Borra el campo (NULL en BD) |
 
 ## Configuración
 
@@ -124,25 +178,11 @@ El parser no ejecuta código del fichero de configuración.
 | `CHECK_SECONDS` | `300` | Intervalo de comprobación de versión |
 | `SYNC_CLIENTS` | `true` | Descargar y mantener `clients.json` local |
 | `EXTRAS_ENABLED` | `false` | Habilitar campos extra en el registro |
-| `EXEC_IMPERATIVE` | `cycle` | Dónde ejecutar el script imperativo: `cycle` o `delegate` |
-| `EXEC_INFORMATIVE` | `cycle` | Dónde ejecutar el script informativo: `cycle` o `delegate` |
-| `EXTRA_IMPERATIVE_SCRIPT` | — | Script que produce `extra_imperative` (JSON en stdout) |
-| `EXTRA_INFORMATIVE_SCRIPT` | — | Script que produce `extra_informative` (JSON en stdout) |
-| `LOG_LEVEL` | `normal` | Nivel de log: `no` (silencio), `normal` (eventos importantes), `debug` (detallado) |
+| `EXTRAS_TTL` | `86400` | TTL de claves extras en segundos (0 = sin expiración) |
+| `EXTRAS_IMPERATIVE_HOOKS_DIR` | `/etc/vac/extras_imperative.d` | Directorio de hooks cíclicos imperativos |
+| `EXTRAS_INFORMATIVE_HOOKS_DIR` | `/etc/vac/extras_informative.d` | Directorio de hooks cíclicos informativos |
+| `LOG_LEVEL` | `normal` | Nivel de log: `no` · `normal` · `debug` |
 | `LOG_FILE` | — | Fichero de log adicional con timestamp ISO-8601 UTC (vacío = solo journald) |
-
-### Semántica de extras
-
-| Situación | Valor enviado a VAS | Efecto en BD |
-|---|---|---|
-| Script produce JSON válido | `{"k":"v"}` | Sobreescribe el campo |
-| Script falla / no configurado | `null` | COALESCE: conserva valor existente |
-| `EXTRAS_ENABLED=false` | `{}` | Borra el campo (NULL en BD) |
-
-### Modos EXEC_*
-
-- `cycle`: VAC ejecuta el script en cada ciclo. Los cambios disparan heartbeat→register automáticamente via selfcheck.
-- `delegate`: VAC envía `null` (COALESCE). Un proceso externo llama a `vac-register --imperative <json>` cuando cambian los datos.
 
 ## Integración con Veyon
 
