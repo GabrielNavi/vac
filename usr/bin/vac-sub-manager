@@ -93,7 +93,7 @@ while true; do
     for name in "${!CHILD_PIDS[@]}"; do
         pid="${CHILD_PIDS[$name]}"
         if ! kill -0 "$pid" 2>/dev/null; then
-            log "[PARALLEL] ${name}-vac se ha congelado (PID $pid), reiniciando..."
+            log "[PARALLEL] ${name}-vac ha terminado inesperadamente (PID $pid), reiniciando..."
             vac-sub "$name" &
             CHILD_PIDS[$name]=$!
             log "[PARALLEL] ${name}-vac relanzado (PID ${CHILD_PIDS[$name]})"

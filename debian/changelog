@@ -1,3 +1,15 @@
+vx-dga-l-vac (0.9-9~rc) unstable; urgency=low
+
+  * vac-common.sh: build_extras_merge() corregido para que un fallo de jq
+    (JSON corrupto o ilegible) devuelva "" (COALESCE, conserva valor previo
+    en VAS) en lugar de "{}" (borrado explícito). Distingue correctamente
+    fallo de jq de fichero vacío legítimo.
+  * vac-sub-manager: mensaje de log corregido — "se ha congelado" →
+    "ha terminado inesperadamente". Alineado con val-sub-manager.
+  * debian/control: Standards-Version: 4.7.0.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Wed, 28 May 2026 14:30:00 +0200
+
 vx-dga-l-vac (0.9-8~rc) stable; urgency=medium
 
   * vac-register --name: corregida generación de UUID cuando la sub-instancia

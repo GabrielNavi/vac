@@ -423,7 +423,11 @@ build_extras_merge() {
         return 0
     fi
     local count
-    count="$(jq 'keys | length' "$file" 2>/dev/null || echo 0)"
+    # Si jq falla (JSON corrupto o ilegible): COALESCE para conservar el valor previo en VAS.
+    if ! count="$(jq 'keys | length' "$file" 2>/dev/null)"; then
+        echo ""
+        return 0
+    fi
     # Fichero vacío (0 claves): {} → VAS pone NULL explícito en BD.
     if [[ "$count" -eq 0 ]]; then
         echo "{}"
