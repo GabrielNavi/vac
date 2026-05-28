@@ -13,7 +13,7 @@ No tiene dependencia de Veyon. Si el equipo tiene Veyon instalado, la sincroniza
 ```
 vx-dga-l-vas          → registro canónico (servidor)
 vx-dga-l-vac          → cliente de autoregistro (este paquete)
-vx-dga-l-vcd          → consumidor genérico de inventario (hooks)
+vx-dga-l-val          → consumidor genérico de inventario (hooks)
 vx-dga-l-vaf          → federación de servidores VAS en jerarquía
 vx-dga-l-veyon-sync   → integración Veyon opcional
 ```
