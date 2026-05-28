@@ -1,3 +1,14 @@
+vx-dga-l-vac (0.9-8~rc) stable; urgency=medium
+
+  * vac-register --name: corregida generación de UUID cuando la sub-instancia
+    no tenía vac-id aún. Ahora usa UUID v5 derivado (sha1, namespace=base-uuid,
+    name=NAME), idéntico al que genera vac-sub al arrancar por primera vez.
+    Evita crear dos clientes en VAS para la misma sub-instancia lógica.
+  * vac-sub-manager: añadido mkdir -p sobre el directorio del pidfile antes de
+    escribirlo, alineado con vcd-sub-manager.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Wed, 28 May 2026 12:00:00 +0200
+
 vx-dga-l-vac (0.9-7~rc) stable; urgency=medium
 
   * Paralelización: soporte de múltiples sub-instancias VAC en un mismo equipo,

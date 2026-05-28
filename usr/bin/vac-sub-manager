@@ -23,6 +23,7 @@ load_all_conf
 
 SUB_DIR="/etc/vac/vac.sub"
 PIDFILE="/var/lib/vac/vac-sub-manager.pid"
+mkdir -p "$(dirname "$PIDFILE")"
 
 # ---------------------------------------------------------------------------
 # Guarda contra doble arranque

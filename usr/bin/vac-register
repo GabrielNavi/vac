@@ -93,9 +93,16 @@ load_all_conf
 mkdir -p "$STATE_DIR"
 
 if [[ ! -f "$ID_FILE" ]]; then
-    uuidgen > "$ID_FILE"
-    chmod 600 "$ID_FILE"
-    log "UUID generado: $(cat "$ID_FILE")"
+    if [[ -n "$NAME" ]]; then
+        BASE_UUID="$(tr -d '[:space:]' < /etc/vac/vac-id)"
+        uuidgen --sha1 --namespace "${BASE_UUID}" --name "${NAME}" > "$ID_FILE"
+        chmod 600 "$ID_FILE"
+        log "UUID derivado generado: $(cat "$ID_FILE") (base=${BASE_UUID} name=${NAME})"
+    else
+        uuidgen > "$ID_FILE"
+        chmod 600 "$ID_FILE"
+        log "UUID generado: $(cat "$ID_FILE")"
+    fi
 fi
 
 if [[ ! -f "$VERSION_FILE" ]]; then
