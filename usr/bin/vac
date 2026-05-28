@@ -57,6 +57,8 @@ log "EXTRAS_ENABLED: $EXTRAS_ENABLED"
 log "EXTRAS_TTL:     ${EXTRAS_TTL}s"
 log "SYNC_CLIENTS:   $SYNC_CLIENTS"
 log "STATE_DIR:      $STATE_DIR"
+log "USE_VAT:        $USE_VAT"
+[[ "$USE_VAT" == "true" ]] && log "VAT_PRESET:     $VAT_PRESET"
 
 if [[ "$PARALLELIZATION" == "true" ]]; then
     if command -v vac-sub-manager >/dev/null 2>&1; then

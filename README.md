@@ -206,6 +206,20 @@ El parser no ejecuta código del fichero de configuración.
 | `LOG_LEVEL` | `normal` | Nivel de log: `no` · `normal` · `debug` |
 | `LOG_FILE` | — | Fichero de log adicional con timestamp ISO-8601 UTC (vacío = solo journald) |
 | `PARALLELIZATION` | `false` | Si `true`, `vac` lanza `vac-sub-manager` al arrancar para gestionar sub-instancias |
+| `USE_VAT` | `false` | Si `true`, aplica `vat-operate` sobre `clients.json` tras cada descarga. Requiere `vx-dga-l-vat`. |
+| `VAT_PRESET` | _(vacío)_ | Nombre del preset VAT a aplicar (sin extensión `.yaml`). Obligatorio si `USE_VAT=true`. |
+
+## Integración con VAT
+
+Con `USE_VAT=true` y `vx-dga-l-vat` instalado, VAC saneea `clients.json` tras cada descarga antes de que cualquier consumidor con `SOURCE=vac` lo lea:
+
+```bash
+# /etc/vac/vac.conf
+USE_VAT=true
+VAT_PRESET=centro
+```
+
+La dirección aplicada es `downstream` (datos llegando de VAS hacia la copia local). Si `vat-operate` no está instalado se emite `[VAT-WARN]` y el fichero se conserva sin modificar.
 
 ## Paralelización
 

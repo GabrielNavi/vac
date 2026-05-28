@@ -1,3 +1,21 @@
+vx-dga-l-vac (0.9-12~rc) unstable; urgency=low
+
+  * debian/control: Suggests: vx-dga-l-vat.
+  * README.md, wiki Configuracion.md: documentados USE_VAT y VAT_PRESET.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Wed, 28 May 2026 21:00:00 +0200
+
+vx-dga-l-vac (0.9-11~rc) unstable; urgency=low
+
+  * Integración opcional con vx-dga-l-vat (Versatile Autoregistration Transformer).
+  * vac-common.sh: nuevas variables USE_VAT y VAT_PRESET en defaults y parser.
+  * vac-common.sh: download_clients() aplica vat-operate --direction downstream
+    sobre clients.json tras cada descarga si USE_VAT=true, antes de que
+    cualquier consumidor (SOURCE=vac) lo lea.
+  * vac.conf, vac.conf.defaults: USE_VAT y VAT_PRESET documentados y comentados.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Wed, 28 May 2026 20:00:00 +0200
+
 vx-dga-l-vac (0.9-10~rc) unstable; urgency=low
 
   * Nueva variable HEARTBEAT_SECONDS: desacopla la señal de liveness (POST

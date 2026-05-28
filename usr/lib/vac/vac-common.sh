@@ -41,6 +41,8 @@ EXTRAS_IMPERATIVE_HOOKS_DIR="${EXTRAS_IMPERATIVE_HOOKS_DIR:-/etc/vac/extras_impe
 EXTRAS_INFORMATIVE_HOOKS_DIR="${EXTRAS_INFORMATIVE_HOOKS_DIR:-/etc/vac/extras_informative.d}"
 SYNC_CLIENTS=true
 PARALLELIZATION=false
+USE_VAT=false
+VAT_PRESET=""
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -107,6 +109,8 @@ load_conf() {
             EXTRAS_INFORMATIVE_HOOKS_DIR) EXTRAS_INFORMATIVE_HOOKS_DIR="$val"; (( ++loaded )) ;;
             SYNC_CLIENTS)                SYNC_CLIENTS="$val";                (( ++loaded )) ;;
             PARALLELIZATION)          PARALLELIZATION="$val";          (( ++loaded )) ;;
+            USE_VAT)                  USE_VAT="$val";                  (( ++loaded )) ;;
+            VAT_PRESET)               VAT_PRESET="$val";               (( ++loaded )) ;;
             LOG_LEVEL)                LOG_LEVEL="$val";                (( ++loaded )) ;;
             LOG_FILE)                 LOG_FILE="$val";                 (( ++loaded )) ;;
         esac
@@ -318,6 +322,21 @@ download_clients() {
         count="$(jq '.clients | length' "$TMP_CLIENTS" 2>/dev/null || echo '?')"
         mv "$TMP_CLIENTS" "$CLIENTS_FILE"
         log "[SYNC] Inventario guardado: $CLIENTS_FILE ($count equipo(s))"
+
+        if [[ "$USE_VAT" == "true" && -n "$VAT_PRESET" ]]; then
+            if command -v vat-operate &>/dev/null; then
+                local vat_out
+                vat_out="$(vat-operate --source-component VAC --direction downstream \
+                    --preset "$VAT_PRESET" < "$CLIENTS_FILE" 2>/dev/null)" \
+                && echo "$vat_out" > "${CLIENTS_FILE}.tmp" \
+                && mv "${CLIENTS_FILE}.tmp" "$CLIENTS_FILE" \
+                && log "[VAT] clients.json saneado con preset '$VAT_PRESET'" \
+                || log "[VAT-WARN] vat-operate falló. clients.json sin sanear."
+            else
+                log "[VAT-WARN] USE_VAT=true pero vat-operate no encontrado."
+            fi
+        fi
+
         return 0
     else
         log "[SYNC-ERROR] Error descargando inventario. CLIENTS_FILE no modificado."
