@@ -1,5 +1,5 @@
 #!/bin/bash
-# VAC — Vitalinux Autoregistration Client
+# VAC — Versatile Autoregistration Client
 #
 # Servicio systemd que registra este equipo en VAS y mantiene una copia
 # local del inventario de red en /var/lib/vac/clients.json.

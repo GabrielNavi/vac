@@ -1,6 +1,6 @@
-# vx-dga-l-vac — Vitalinux Autoregistration Client
+# vx-dga-l-vac — Versatile Autoregistration Client
 
-Paquete Debian para Vitalinux que instala el cliente de autoregistro de red (VAC).
+Paquete Debian que instala el cliente de autoregistro de red (VAC).
 
 ## Descripción
 

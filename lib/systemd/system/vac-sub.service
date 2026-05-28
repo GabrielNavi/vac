@@ -1,5 +1,5 @@
 [Unit]
-Description=Vitalinux Autoregistration Client — Sub-instance Manager
+Description=Versatile Autoregistration Client — Sub-instance Manager
 After=network-online.target
 Wants=network-online.target
 
