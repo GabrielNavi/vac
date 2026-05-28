@@ -79,23 +79,36 @@ Esperar VAS_HOST definido
 ### Bucle principal
 
 ```
-1. Ejecutar hooks de extras → expirar TTL → construir merge
-2. Selfcheck local: comparar merge plano con identity.json
-   Sin cambios → POST /heartbeat ({id}, ~50 B; actualiza last_seen en VAS)
-                  Si VAS devuelve 404 → re-registro automático
-   Con cambios → POST /register; guardar identity.json
-3. GET /version → comparar con versión local
-   Sin cambios → sleep CHECK_SECONDS, siguiente ciclo
-4. Nueva versión detectada:
-   Si SYNC_CLIENTS=true → GET /clients → clients.json
-   GET /clients/{UUID}  → identity.json (reflejo desde VAS)
-   Actualizar VERSION_FILE
-5. sleep CHECK_SECONDS
+Cada ciclo: recopilar hostname/IP/MAC + hooks/extras
+
+Bloque CHECK (cada CHECK_SECONDS):
+1. Selfcheck: comparar con identity.json
+   Con cambios → POST /register; guardar identity.json; resetear HB
+2. GET /version → comparar con versión local
+   Nueva versión → SYNC_CLIENTS=true → GET /clients → clients.json
+                   GET /clients/{UUID} → refrescar identity.json
+                   Actualizar VERSION_FILE
+
+Bloque HB (cada HEARTBEAT_SECONDS):
+POST /heartbeat ({id}, ~50 B; actualiza last_seen en VAS)
+  VAS 404 o sin respuesta → POST /register; resetear CHECK
+
+sleep min(CHECK_SECONDS, HEARTBEAT_SECONDS)
 ```
+
+### Modos de operación
+
+| `CHECK_SECONDS` | `HEARTBEAT_SECONDS` | Uso |
+|---|---|---|
+| 300 | _(vacío)_ | Comportamiento anterior — ambos bloques al mismo ritmo |
+| 60 | 300 | Reactivo a cambios de IP/hostname; heartbeat lento |
+| 300 | 60 | Liveness frecuente; selfcheck lento |
+
+Un registro exitoso en cualquier bloque resetea el temporizador del otro.
 
 ### Mecanismo TTL
 
-El `POST /heartbeat` del paso 2 actualiza `last_seen` en VAS en cada ciclo aunque los datos no hayan cambiado, manteniendo al equipo activo frente al TTL de VAS. Relación de seguridad: `CHECK_SECONDS << TTL_INACTIVE_DAYS × 86400`.
+El heartbeat actualiza `last_seen` en VAS sin modificar datos ni subir versión. Relación de seguridad: `HEARTBEAT_SECONDS << TTL_INACTIVE_DAYS × 86400`.
 
 ## vac-register
 
@@ -183,7 +196,8 @@ El parser no ejecuta código del fichero de configuración.
 |---|---|---|
 | `VAS_HOST` | — | URL base del servidor VAS (sin barra final). **Obligatorio.** |
 | `RETRY_SECONDS` | `60` | Espera entre reintentos ante fallo de red |
-| `CHECK_SECONDS` | `300` | Intervalo de comprobación de versión |
+| `CHECK_SECONDS` | `300` | Intervalo del bloque selfcheck + comprobación de versión |
+| `HEARTBEAT_SECONDS` | _(= `CHECK_SECONDS`)_ | Intervalo del heartbeat de liveness. Vacío = igual a `CHECK_SECONDS` |
 | `SYNC_CLIENTS` | `true` | Descargar y mantener `clients.json` local |
 | `EXTRAS_ENABLED` | `false` | Habilitar campos extra en el registro |
 | `EXTRAS_TTL` | `86400` | TTL de claves extras en segundos (0 = sin expiración) |

@@ -34,6 +34,7 @@ EXTRAS_INF_FILE="${STATE_DIR}/extras_informative.json"
 VAS_HOST=""
 RETRY_SECONDS=60
 CHECK_SECONDS=300
+HEARTBEAT_SECONDS=""   # vacío = igual a CHECK_SECONDS (resuelto tras load_all_conf)
 EXTRAS_ENABLED=false
 EXTRAS_TTL=86400
 EXTRAS_IMPERATIVE_HOOKS_DIR="${EXTRAS_IMPERATIVE_HOOKS_DIR:-/etc/vac/extras_imperative.d}"
@@ -99,6 +100,7 @@ load_conf() {
             VAS_HOST)                 VAS_HOST="$val";                 (( ++loaded )) ;;
             RETRY_SECONDS)            RETRY_SECONDS="$val";            (( ++loaded )) ;;
             CHECK_SECONDS)            CHECK_SECONDS="$val";            (( ++loaded )) ;;
+            HEARTBEAT_SECONDS)        HEARTBEAT_SECONDS="$val";        (( ++loaded )) ;;
             EXTRAS_ENABLED)              EXTRAS_ENABLED="$val";              (( ++loaded )) ;;
             EXTRAS_TTL)                  EXTRAS_TTL="$val";                  (( ++loaded )) ;;
             EXTRAS_IMPERATIVE_HOOKS_DIR) EXTRAS_IMPERATIVE_HOOKS_DIR="$val"; (( ++loaded )) ;;

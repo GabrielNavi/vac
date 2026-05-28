@@ -30,6 +30,7 @@ source /usr/lib/vac/vac-common.sh
 # Inicialización
 # ---------------------------------------------------------------------------
 load_all_conf
+: "${HEARTBEAT_SECONDS:=$CHECK_SECONDS}"   # vacío en conf → mismo intervalo que CHECK
 
 mkdir -p "$STATE_DIR"
 
@@ -50,6 +51,7 @@ log "=== Iniciando VAC ==="
 log "UUID:           $CLIENT_ID"
 log "VAS_HOST:       ${VAS_HOST:-'(no definido)'}"
 log "CHECK:          ${CHECK_SECONDS}s"
+log "HEARTBEAT:      ${HEARTBEAT_SECONDS}s"
 log "RETRY:          ${RETRY_SECONDS}s"
 log "EXTRAS_ENABLED: $EXTRAS_ENABLED"
 log "EXTRAS_TTL:     ${EXTRAS_TTL}s"
@@ -246,79 +248,103 @@ while true; do
 done
 
 # ---------------------------------------------------------------------------
+# Temporizadores y sleep base
+# ---------------------------------------------------------------------------
+# Dos temporizadores independientes:
+#   LAST_CHECK_TS → selfcheck + comparación de versión (cada CHECK_SECONDS)
+#   LAST_HB_TS    → heartbeat de liveness              (cada HEARTBEAT_SECONDS)
+#
+# El sleep base es el menor de los dos intervalos para que ningún temporizador
+# se retrase más de un ciclo:
+#   CHECK < HEARTBEAT → detección rápida de cambios, heartbeat más lento.
+#   CHECK > HEARTBEAT → liveness frecuente, selfcheck menos frecuente.
+#   CHECK = HEARTBEAT → comportamiento equivalente al anterior (backwards compat).
+# ---------------------------------------------------------------------------
+LAST_CHECK_TS=$(date +%s)
+LAST_HB_TS=$(date +%s)
+if (( CHECK_SECONDS <= HEARTBEAT_SECONDS )); then
+    SLEEP_INTERVAL=$CHECK_SECONDS
+else
+    SLEEP_INTERVAL=$HEARTBEAT_SECONDS
+fi
+log "SLEEP_BASE:     ${SLEEP_INTERVAL}s"
+
+# ---------------------------------------------------------------------------
 # Bucle principal
 # ---------------------------------------------------------------------------
 while true; do
-    cycle_start="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-    log_debug "--- Ciclo iniciado: $cycle_start ---"
+    now=$(date +%s)
 
-    # --- Paso 1: Recopilar datos actuales ------------------------------------
-    LOC_HOST="$(get_hostname)"
-    LOC_IP="$(get_ip)"
-    LOC_MAC="$(get_mac)"
-    collect_extras   # → EXTRA_IMP, EXTRA_INF
+    # --- Paso 1: Selfcheck + registro + versión (cada CHECK_SECONDS) ----------
+    if (( now - LAST_CHECK_TS >= CHECK_SECONDS )); then
+        log_debug "--- Ciclo de selfcheck: $(date -u '+%Y-%m-%d %H:%M:%S UTC') ---"
 
-    # --- Paso 2: Selfcheck local + heartbeat o registro ----------------------
-    needs_register=false
+        LOC_HOST="$(get_hostname)"
+        LOC_IP="$(get_ip)"
+        LOC_MAC="$(get_mac)"
+        collect_extras
 
-    if selfcheck_local; then
-        # Sin cambios → heartbeat ligero (solo last_seen)
-        if ! heartbeat_client; then
-            log "[HEARTBEAT] Sin respuesta o cliente no registrado — re-registrando."
-            needs_register=true
+        if ! selfcheck_local; then
+            if ! register_client "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" > /dev/null; then
+                log "No se pudo contactar con VAS. Reintentando en ${RETRY_SECONDS}s."
+                sleep "$RETRY_SECONDS"
+                continue
+            fi
+            save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF"
+            LAST_HB_TS=$now   # el registro actualiza last_seen en VAS
         fi
-    else
-        needs_register=true
-    fi
 
-    if [[ "$needs_register" == "true" ]]; then
-        if ! register_client "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" > /dev/null; then
-            log "No se pudo contactar con VAS. Reintentando en ${RETRY_SECONDS}s."
+        local_version="$(tr -d '[:space:]' < "$VERSION_FILE")"
+        log_debug "[VERSION] Local: $local_version"
+
+        remote_version_raw="$(get_remote_version)"
+
+        if [[ -z "$remote_version_raw" ]]; then
+            log "[VERSION] No se pudo obtener versión remota. Reintentando en ${RETRY_SECONDS}s."
             sleep "$RETRY_SECONDS"
             continue
         fi
-        save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF"
+
+        if [[ ! "$remote_version_raw" =~ ^[0-9]+$ ]]; then
+            log "[VERSION] Versión remota inválida: '$remote_version_raw'. Reintentando en ${RETRY_SECONDS}s."
+            sleep "$RETRY_SECONDS"
+            continue
+        fi
+
+        if [[ "$remote_version_raw" != "$local_version" ]]; then
+            log "[SYNC] Nueva versión: $local_version → $remote_version_raw"
+            if [[ "$SYNC_CLIENTS" == "true" ]]; then
+                download_clients || log "[SYNC-ERROR] No se pudo descargar el inventario. Continuando."
+            fi
+            refresh_identity || log "[IDENTITY] No se pudo refrescar identity desde VAS. Continuando."
+            echo "$remote_version_raw" > "$VERSION_FILE"
+            log "[SYNC] Versión local actualizada: $remote_version_raw"
+        else
+            log_debug "[VERSION] Sin cambios."
+        fi
+
+        LAST_CHECK_TS=$now
     fi
 
-    # --- Paso 3: Comparar versiones ------------------------------------------
-    local_version="$(tr -d '[:space:]' < "$VERSION_FILE")"
-    log_debug "[VERSION] Versión local: $local_version"
-
-    remote_version_raw="$(get_remote_version)"
-
-    if [[ -z "$remote_version_raw" ]]; then
-        log "[VERSION] No se pudo obtener versión remota. Reintentando en ${RETRY_SECONDS}s."
-        sleep "$RETRY_SECONDS"
-        continue
+    # --- Paso 2: Heartbeat de liveness (cada HEARTBEAT_SECONDS) ---------------
+    if (( now - LAST_HB_TS >= HEARTBEAT_SECONDS )); then
+        if ! heartbeat_client; then
+            log "[HEARTBEAT] Sin respuesta o cliente no registrado — re-registrando."
+            LOC_HOST="$(get_hostname)"
+            LOC_IP="$(get_ip)"
+            LOC_MAC="$(get_mac)"
+            collect_extras
+            if ! register_client "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" > /dev/null; then
+                log "No se pudo re-registrar. Reintentando en ${RETRY_SECONDS}s."
+                sleep "$RETRY_SECONDS"
+                continue
+            fi
+            save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF"
+            LAST_CHECK_TS=$now   # el registro confirma identidad; evitar check redundante
+        fi
+        LAST_HB_TS=$now
     fi
 
-    if [[ ! "$remote_version_raw" =~ ^[0-9]+$ ]]; then
-        log "[VERSION] Versión remota inválida: '$remote_version_raw'. Reintentando en ${RETRY_SECONDS}s."
-        sleep "$RETRY_SECONDS"
-        continue
-    fi
-
-    remote_version="$remote_version_raw"
-    log_debug "[VERSION] Versión remota: $remote_version"
-
-    if [[ "$remote_version" == "$local_version" ]]; then
-        log_debug "[VERSION] Sin cambios. Próxima comprobación en ${CHECK_SECONDS}s."
-        sleep "$CHECK_SECONDS"
-        continue
-    fi
-
-    log "[SYNC] Nueva versión detectada: $local_version → $remote_version"
-
-    # --- Paso 4: Sincronizar inventario e identity ---------------------------
-    if [[ "$SYNC_CLIENTS" == "true" ]]; then
-        download_clients || log "[SYNC-ERROR] No se pudo descargar el inventario. Continuando."
-    fi
-
-    refresh_identity || log "[IDENTITY] No se pudo refrescar identity desde VAS. Continuando."
-
-    echo "$remote_version" > "$VERSION_FILE"
-    log "[SYNC] Versión local actualizada: $remote_version"
-
-    log_debug "--- Ciclo completado. Próxima comprobación en ${CHECK_SECONDS}s. ---"
-    sleep "$CHECK_SECONDS"
+    log_debug "--- Próxima comprobación en ${SLEEP_INTERVAL}s. ---"
+    sleep "$SLEEP_INTERVAL"
 done

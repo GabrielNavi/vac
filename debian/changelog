@@ -1,3 +1,25 @@
+vx-dga-l-vac (0.9-10~rc) unstable; urgency=low
+
+  * Nueva variable HEARTBEAT_SECONDS: desacopla la señal de liveness (POST
+    /heartbeat) del ciclo de selfcheck y versión (CHECK_SECONDS). El bucle
+    principal usa dos temporizadores independientes; el sleep base es
+    min(CHECK_SECONDS, HEARTBEAT_SECONDS).
+    - HEARTBEAT_SECONDS vacío o no definido → igual a CHECK_SECONDS
+      (comportamiento anterior, backwards compatible).
+    - CHECK_SECONDS < HEARTBEAT_SECONDS → selfcheck frecuente, heartbeat lento
+      (detecta cambios de IP/hostname rápidamente).
+    - CHECK_SECONDS > HEARTBEAT_SECONDS → liveness frecuente, selfcheck lento
+      (detecta caídas rápidamente sin sobrecargar el ciclo de datos).
+  * vac, vac-sub: bucle principal refactorizado con dos bloques temporizados
+    independientes (CHECK y HEARTBEAT). Un registro exitoso en cualquiera de
+    los dos bloques resetea el temporizador del otro para evitar señales
+    redundantes en el mismo ciclo.
+  * vac-common.sh: HEARTBEAT_SECONDS añadido a defaults y parser load_conf.
+  * vac.conf, vac.conf.defaults: HEARTBEAT_SECONDS documentado con ejemplos
+    de los dos modos de operación.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Wed, 28 May 2026 16:00:00 +0200
+
 vx-dga-l-vac (0.9-9~rc) unstable; urgency=low
 
   * vac-common.sh: build_extras_merge() corregido para que un fallo de jq
