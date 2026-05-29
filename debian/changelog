@@ -1,3 +1,13 @@
+vx-dga-l-vac (0.9-14~rc) unstable; urgency=low
+
+  * vac: corregido doble collect_extras() en el mismo tick.
+    Si selfcheck (paso 1) y heartbeat fallido (paso 2) coinciden en la misma
+    iteración del bucle, los extras-hooks se lanzaban dos veces. Añadido flag
+    EXTRAS_COLLECTED_THIS_TICK reseteado al inicio de cada iteración; el paso 2
+    solo llama collect_extras() si el paso 1 no lo hizo ya.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Thu, 29 May 2026 15:30:00 +0200
+
 vx-dga-l-vac (0.9-13~rc) unstable; urgency=low
 
   * vac, vac-sub: lectura de VERSION_FILE con || echo "0" para sobrevivir

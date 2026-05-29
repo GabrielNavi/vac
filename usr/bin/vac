@@ -276,6 +276,7 @@ log "SLEEP_BASE:     ${SLEEP_INTERVAL}s"
 # ---------------------------------------------------------------------------
 while true; do
     now=$(date +%s)
+    EXTRAS_COLLECTED_THIS_TICK=false
 
     # --- Paso 1: Selfcheck + registro + versión (cada CHECK_SECONDS) ----------
     if (( now - LAST_CHECK_TS >= CHECK_SECONDS )); then
@@ -285,6 +286,7 @@ while true; do
         LOC_IP="$(get_ip)"
         LOC_MAC="$(get_mac)"
         collect_extras
+        EXTRAS_COLLECTED_THIS_TICK=true
 
         if ! selfcheck_local; then
             if ! register_client "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" > /dev/null; then
@@ -335,7 +337,7 @@ while true; do
             LOC_HOST="$(get_hostname)"
             LOC_IP="$(get_ip)"
             LOC_MAC="$(get_mac)"
-            collect_extras
+            [[ "$EXTRAS_COLLECTED_THIS_TICK" == "false" ]] && collect_extras
             if ! register_client "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" > /dev/null; then
                 log "No se pudo re-registrar. Reintentando en ${RETRY_SECONDS}s."
                 sleep "$RETRY_SECONDS"
