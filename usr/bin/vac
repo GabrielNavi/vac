@@ -30,6 +30,7 @@ source /usr/lib/vac/vac-common.sh
 # Inicialización
 # ---------------------------------------------------------------------------
 load_all_conf
+_normalize_vas_host
 : "${HEARTBEAT_SECONDS:=$CHECK_SECONDS}"   # vacío en conf → mismo intervalo que CHECK
 
 mkdir -p "$STATE_DIR"
@@ -141,7 +142,7 @@ collect_extras() {
 # ---------------------------------------------------------------------------
 get_remote_version() {
     curl -fsS --max-time 10 --connect-timeout 5 \
-        "${VAS_HOST%/}/version" 2>/dev/null \
+        "${VAS_SCHEME}://${VAS_HOST}/version" 2>/dev/null \
         | jq -r '.version' 2>/dev/null \
         || echo ""
 }
@@ -189,7 +190,7 @@ selfcheck_local() {
 refresh_identity() {
     local response
     response="$(curl -fsS --max-time 10 --connect-timeout 5 \
-        "${VAS_HOST%/}/clients/${CLIENT_ID}" 2>/dev/null)" || response=""
+        "${VAS_SCHEME}://${VAS_HOST}/clients/${CLIENT_ID}" 2>/dev/null)" || response=""
 
     if [[ -z "$response" ]]; then
         log "[IDENTITY] No se pudo obtener datos propios de VAS. Identity no actualizado."

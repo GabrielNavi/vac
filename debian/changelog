@@ -1,3 +1,18 @@
+vx-dga-l-vac (0.9-15~rc) unstable; urgency=low
+
+  * vac-common.sh: nueva variable VAS_SCHEME (default: http) y función
+    _normalize_vas_host(): extrae scheme de VAS_HOST si lo contiene (retrocompat
+    con [WARN]), añade puerto :8000 implícito si no se especifica. Todos los curl
+    usan ahora ${VAS_SCHEME}://${VAS_HOST}/endpoint.
+  * vac, vac-sub: añadida llamada a _normalize_vas_host() tras cargar config.
+  * vac.conf: reformateado con comentarios cortos; VAS_HOST sin scheme ni puerto
+    (puerto 8000 implícito); VAS_SCHEME comentado; todas las claves presentes.
+    Referencia exhaustiva en /usr/share/vac/vac.conf.defaults.
+  * vac.conf.defaults: documentación exhaustiva con ejemplos para cada variable;
+    secciones por área; notas sobre interacción entre parámetros.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Thu, 29 May 2026 18:00:00 +0200
+
 vx-dga-l-vac (0.9-14~rc) unstable; urgency=low
 
   * vac: corregido doble collect_extras() en el mismo tick.

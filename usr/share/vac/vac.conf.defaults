@@ -2,66 +2,107 @@
 # Configuración activa:    /etc/vac/vac.conf
 # Sobreescrituras:         /etc/vac/vac.conf.d/*.conf
 
-# Configuración del cliente VAC
-# Nota: Puedes añadir sobreescrituras en /etc/vac/vac.conf.d/*.conf
-# (se aplican en orden lexical, después de este archivo).
+# ---------------------------------------------------------------------------
+# Conexión al servidor VAS
+# ---------------------------------------------------------------------------
 
-# URL base del servidor VAS (sin barra final)
-VAS_HOST="http://10.0.0.1:8000"
+# IP o hostname del servidor VAS. No incluir scheme (http/https) ni barra final.
+# El puerto es implícito (:8000) si no se especifica; usa IP:PUERTO para otro puerto.
+# Ejemplos:
+#   VAS_HOST=10.0.0.1            → http://10.0.0.1:8000 (puerto y scheme por defecto)
+#   VAS_HOST=10.0.0.1:9000       → http://10.0.0.1:9000
+#   VAS_HOST=vas.ejemplo.org     → http://vas.ejemplo.org:8000
+# Si se incluye scheme (http://...) se extrae automáticamente con [WARN] en log.
+VAS_HOST=10.0.0.1
 
-# Espera entre reintentos cuando no hay conexión con VAS
+# Esquema de conexión al servidor VAS.
+# http  → conexión sin cifrar (default).
+# https → conexión cifrada; asegúrate de que VAS esté detrás de un proxy TLS.
+# VAS_SCHEME=http
+
+# ---------------------------------------------------------------------------
+# Temporizadores
+# ---------------------------------------------------------------------------
+
+# Segundos de espera entre reintentos cuando no hay conexión con VAS.
 RETRY_SECONDS=60
 
-# Espera entre comprobaciones de versión remota y selfcheck de datos (hostname/IP/MAC).
-# Debe ser notablemente menor que TTL_INACTIVE_DAYS de VAS (en segundos).
-# Con TTL_INACTIVE_DAYS=30d, cualquier valor < 2.500.000 s es seguro.
+# Segundos entre selfchecks (comparación hostname/IP/MAC/extras) y consulta
+# de versión remota. Debe ser notablemente menor que TTL_INACTIVE de VAS.
+# Con TTL_INACTIVE=30d (2 592 000 s), cualquier valor < 2 500 000 s es seguro.
+# En redes con cambios frecuentes de IP, reducir a 60–120 s.
 CHECK_SECONDS=300
 
-# Intervalo entre señales de liveness (POST /heartbeat sin selfcheck).
-# Vacío = igual a CHECK_SECONDS (backwards compatible).
+# Intervalo entre señales de liveness (POST /heartbeat sin selfcheck completo).
+# Vacío o no definido: igual a CHECK_SECONDS (comportamiento original).
 # CHECK_SECONDS < HEARTBEAT_SECONDS → selfcheck frecuente, heartbeat lento.
 # CHECK_SECONDS > HEARTBEAT_SECONDS → liveness frecuente, selfcheck lento.
+#   Ejemplo reactivo a cambios: CHECK_SECONDS=60  / HEARTBEAT_SECONDS=300
+#   Ejemplo monitorización:     CHECK_SECONDS=300 / HEARTBEAT_SECONDS=60
 # HEARTBEAT_SECONDS=300
 
-# Descargar y mantener una copia local del inventario en /var/lib/vac/clients.json.
-# true  → VAC descarga GET /clients tras cada cambio de versión (comportamiento original).
-# false → VAC solo se registra; no replica la base de datos pública.
+# ---------------------------------------------------------------------------
+# Inventario local
+# ---------------------------------------------------------------------------
+
+# Descargar y mantener copia local del inventario en /var/lib/vac/clients.json.
+# true  → GET /clients tras cada cambio de versión (necesario para SOURCE=vac en VAL).
+# false → VAC solo registra el equipo; no replica la base de datos.
 SYNC_CLIENTS=true
 
-# Habilitar campos extra (extra_imperative / extra_informative) en el registro.
-# true  → VAC ejecuta hooks y envía el merge resultante a VAS.
-# false → VAC envía {} en ambos campos (borrado explícito en VAS); ignora hooks.
+# ---------------------------------------------------------------------------
+# Campos extra (extra_imperative / extra_informative)
+# ---------------------------------------------------------------------------
+
+# Habilitar envío de campos extra a VAS.
+# true  → VAC ejecuta hooks y envía el merge resultante.
+# false → VAC envía {} en ambos campos (borrado explícito en VAS).
 EXTRAS_ENABLED=false
 
-# TTL de claves extras en segundos (0 = sin expiración).
-# Una clave cuyo timestamp supere este valor se elimina del estado interno antes
-# del siguiente merge, con aviso en log. Útil para detectar productores silenciados.
+# TTL de claves extra en segundos. Una clave cuyo timestamp supere este valor
+# se elimina del estado interno antes del siguiente merge (aviso en log).
+# 0 = sin expiración. Valor típico: 86400 (24 h).
 # EXTRAS_TTL=86400
 
-# Directorios de hooks cíclicos (requiere EXTRAS_ENABLED=true).
-# VAC ejecuta en orden léxico todos los scripts ejecutables del directorio.
-# La clave de cada script es su basename sin extensión (ej: "10-cups.sh" → "cups").
-# Cada script debe imprimir un objeto JSON en stdout y salir con código 0.
-# En caso de error: WARN en log, la clave conserva su valor anterior (no destructivo).
-# extra_imperative  → cambios disparan bump_version en VAS (datos de red/gestión).
-# extra_informative → solo informativo, nunca dispara versión (inventario HW, etc.).
-#
+# Directorios de hooks cíclicos para extras (requiere EXTRAS_ENABLED=true).
+# Cada script ejecutable produce un objeto JSON en stdout (exit 0 = éxito).
+# La clave en VAS es el basename sin extensión ("10-cups.sh" → "cups").
+# extra_imperative  → cambios disparan bump_version en VAS.
+# extra_informative → puramente informativo, nunca sube versión.
 # EXTRAS_IMPERATIVE_HOOKS_DIR=/etc/vac/extras_imperative.d
 # EXTRAS_INFORMATIVE_HOOKS_DIR=/etc/vac/extras_informative.d
 
-# Nivel de logging: no (silencio total), normal (eventos importantes), debug (detallado).
-# Filtrar mensajes debug en journalctl: journalctl -u vac | grep '\[DEBUG\]'
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+# Nivel de log: no (silencio total) | normal (eventos importantes) | debug (detallado).
+# Filtrar debug en journalctl: journalctl -u vac | grep '\[DEBUG\]'
 LOG_LEVEL=normal
 
-# Fichero de log adicional con timestamp ISO-8601 UTC (vacío = solo stdout/journald).
+# Fichero de log adicional con timestamp ISO-8601 UTC.
+# Vacío = solo stdout (capturado por journald cuando corre como servicio).
 # LOG_FILE=/var/log/vac/vac.log
 
-# Paralelización: lanza vac-sub-manager al arrancar para gestionar sub-instancias.
+# ---------------------------------------------------------------------------
+# Paralelización (sub-instancias)
+# ---------------------------------------------------------------------------
+
+# Lanzar vac-sub-manager al arrancar VAC para gestionar sub-instancias.
 # Cada sub-instancia en /etc/vac/vac.sub/<name>/ registra en un VAS diferente
-# con un UUID derivado del UUID base del equipo (v5, determinista).
-# true  → vac arranca vac-sub-manager en background al iniciarse.
-# false → sin sub-instancias (por defecto).
-# Ver también: vac-sub.service (supervisor independiente sin instancia principal).
+# con UUID derivado (v5, determinista): mismo equipo + name = mismo UUID en VAS.
+# true  → vac arranca vac-sub-manager en background.
+# false → sin sub-instancias (default).
+# Ver: vac-sub.service para supervisor independiente sin instancia principal.
 PARALLELIZATION=false
+
+# ---------------------------------------------------------------------------
+# Transformación VAT
+# ---------------------------------------------------------------------------
+
+# Aplicar transformación VAT al inventario local (clients.json) tras descarga.
+# Requiere paquete vx-dga-l-vat instalado.
+# true  → aplica VAT_PRESET a clients.json antes de que cualquier consumidor lo lea.
+# false → sin transformación (default).
 # USE_VAT=false
 # VAT_PRESET=

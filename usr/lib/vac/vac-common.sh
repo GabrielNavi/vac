@@ -32,6 +32,7 @@ EXTRAS_INF_FILE="${STATE_DIR}/extras_informative.json"
 # Valores por defecto de configuración
 # ---------------------------------------------------------------------------
 VAS_HOST=""
+VAS_SCHEME="http"
 RETRY_SECONDS=60
 CHECK_SECONDS=300
 HEARTBEAT_SECONDS=""   # vacío = igual a CHECK_SECONDS (resuelto tras load_all_conf)
@@ -100,6 +101,7 @@ load_conf() {
 
         case "$key" in
             VAS_HOST)                 VAS_HOST="$val";                 (( ++loaded )) ;;
+            VAS_SCHEME)               VAS_SCHEME="$val";               (( ++loaded )) ;;
             RETRY_SECONDS)            RETRY_SECONDS="$val";            (( ++loaded )) ;;
             CHECK_SECONDS)            CHECK_SECONDS="$val";            (( ++loaded )) ;;
             HEARTBEAT_SECONDS)        HEARTBEAT_SECONDS="$val";        (( ++loaded )) ;;
@@ -127,6 +129,27 @@ load_all_conf() {
             [[ -f "$cfg" ]] || continue
             load_conf "$cfg"
         done
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Normalización de VAS_HOST
+# ---------------------------------------------------------------------------
+# Llamar una vez tras cargar la configuración completa.
+# Extrae el scheme de VAS_HOST si lo contiene (retrocompat con http://host:port).
+# Añade puerto :8000 implícito si no se especifica.
+_normalize_vas_host() {
+    if [[ "$VAS_HOST" =~ ^(https?)://(.+) ]]; then
+        local extracted="${BASH_REMATCH[1]}"
+        VAS_HOST="${BASH_REMATCH[2]}"
+        [[ "$extracted" != "$VAS_SCHEME" ]] && \
+            log "[WARN] VAS_HOST contenía scheme '$extracted'; extraído a VAS_SCHEME. Usa VAS_SCHEME=$extracted en vac.conf."
+        VAS_SCHEME="$extracted"
+    fi
+    VAS_HOST="${VAS_HOST%/}"
+    if [[ -n "$VAS_HOST" && ! "$VAS_HOST" =~ :[0-9]+$ ]]; then
+        VAS_HOST="${VAS_HOST}:8000"
+        log_debug "[CONFIG] Puerto implícito añadido: VAS_HOST=$VAS_HOST"
     fi
 }
 
@@ -264,11 +287,11 @@ register_client() {
             extra_informative: $extra_inf
         }')"
 
-    log "[REGISTER] Enviando POST ${VAS_HOST%/}/register ..."
+    log "[REGISTER] Enviando POST ${VAS_SCHEME}://${VAS_HOST}/register ..."
 
     response="$(curl -fsS \
         --max-time 10 --connect-timeout 5 \
-        -X POST "${VAS_HOST%/}/register" \
+        -X POST "${VAS_SCHEME}://${VAS_HOST}/register" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>/dev/null)" || response=""
 
@@ -289,11 +312,11 @@ register_client() {
 heartbeat_client() {
     local response
 
-    log_debug "[HEARTBEAT] Enviando POST ${VAS_HOST%/}/heartbeat ..."
+    log_debug "[HEARTBEAT] Enviando POST ${VAS_SCHEME}://${VAS_HOST}/heartbeat ..."
 
     response="$(curl -fsS \
         --max-time 10 --connect-timeout 5 \
-        -X POST "${VAS_HOST%/}/heartbeat" \
+        -X POST "${VAS_SCHEME}://${VAS_HOST}/heartbeat" \
         -H "Content-Type: application/json" \
         -d "{\"id\":\"$CLIENT_ID\"}" 2>/dev/null)" || response=""
 
@@ -313,10 +336,10 @@ heartbeat_client() {
 # Descarga GET /clients y guarda clients.json de forma atómica.
 # Devuelve 0 si tuvo éxito, 1 si falló (CLIENTS_FILE no se modifica).
 download_clients() {
-    log "[SYNC] Descargando inventario: ${VAS_HOST%/}/clients"
+    log "[SYNC] Descargando inventario: ${VAS_SCHEME}://${VAS_HOST}/clients"
 
     if curl -fsS --max-time 15 --connect-timeout 5 \
-        "${VAS_HOST%/}/clients" -o "$TMP_CLIENTS" 2>/dev/null; then
+        "${VAS_SCHEME}://${VAS_HOST}/clients" -o "$TMP_CLIENTS" 2>/dev/null; then
 
         local count
         count="$(jq '.clients | length' "$TMP_CLIENTS" 2>/dev/null || echo '?')"
