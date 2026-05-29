@@ -1,3 +1,22 @@
+vx-dga-l-vac (0.9-16~rc) unstable; urgency=low
+
+  * vac-common.sh: PARALLELIZATION eliminado (no se lee). Nuevo PARALLEL_MODE
+    (both|only_parallel|only_main, default: both).
+  * vac: PARALLEL_MODE=only_parallel hace exec vac-sub-manager (main silenciado);
+    both lanza el manager en background + continúa el bucle principal;
+    only_main no lanza el manager. Añadido PARALLEL_MODE al startup log.
+  * vac-sub-manager: solo lanza sub-instancias con .enabled. Fail counter con
+    MAX_FAILS=5 y MIN_UPTIME_SECS=30: instancias que mueren repetidamente en
+    menos de 30s se marcan como muertas y dejan de reiniciarse.
+  * vac-sub-instance: --create usa /usr/share/vac/instance-template/vac.conf
+    como base; crea .enabled por defecto (activa inmediatamente). --list añade
+    columna ENABLED.
+  * usr/share/vac/instance-template/vac.conf: nueva plantilla de sub-instancia.
+  * vac.conf, vac.conf.defaults: PARALLELIZATION sustituido por PARALLEL_MODE.
+  * debian/install: añadido instance-template/vac.conf.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Fri, 30 May 2026 12:00:00 +0200
+
 vx-dga-l-vac (0.9-15~rc) unstable; urgency=low
 
   * vac-common.sh: nueva variable VAS_SCHEME (default: http) y función

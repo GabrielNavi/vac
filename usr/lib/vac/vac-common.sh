@@ -41,7 +41,7 @@ EXTRAS_TTL=86400
 EXTRAS_IMPERATIVE_HOOKS_DIR="${EXTRAS_IMPERATIVE_HOOKS_DIR:-/etc/vac/extras_imperative.d}"
 EXTRAS_INFORMATIVE_HOOKS_DIR="${EXTRAS_INFORMATIVE_HOOKS_DIR:-/etc/vac/extras_informative.d}"
 SYNC_CLIENTS=true
-PARALLELIZATION=false
+PARALLEL_MODE="both"
 USE_VAT=false
 VAT_PRESET=""
 
@@ -110,7 +110,7 @@ load_conf() {
             EXTRAS_IMPERATIVE_HOOKS_DIR) EXTRAS_IMPERATIVE_HOOKS_DIR="$val"; (( ++loaded )) ;;
             EXTRAS_INFORMATIVE_HOOKS_DIR) EXTRAS_INFORMATIVE_HOOKS_DIR="$val"; (( ++loaded )) ;;
             SYNC_CLIENTS)                SYNC_CLIENTS="$val";                (( ++loaded )) ;;
-            PARALLELIZATION)          PARALLELIZATION="$val";          (( ++loaded )) ;;
+            PARALLEL_MODE)            PARALLEL_MODE="$val";            (( ++loaded )) ;;
             USE_VAT)                  USE_VAT="$val";                  (( ++loaded )) ;;
             VAT_PRESET)               VAT_PRESET="$val";               (( ++loaded )) ;;
             LOG_LEVEL)                LOG_LEVEL="$val";                (( ++loaded )) ;;

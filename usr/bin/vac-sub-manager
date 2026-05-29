@@ -2,11 +2,15 @@
 # vac-sub-manager — Supervisor de sub-instancias VAC.
 #
 # Escanea /etc/vac/vac.sub/*/ y lanza un proceso vac-sub <name> por cada
-# carpeta que contenga vac.conf. Monitoriza los procesos hijo y los reinicia
-# si mueren. Reporta eventos de ciclo de vida al journal con prefijo [VAC] [PARALLEL].
+# carpeta que contenga vac.conf Y un fichero .enabled. Las carpetas sin
+# .enabled se ignoran (instancias desactivadas o plantillas).
+#
+# Tras MAX_FAILS arranques fallidos consecutivos (proceso muerto en menos de
+# MIN_UPTIME_SECS segundos), la instancia se marca como muerta y no se reinicia.
+# Un arranque que supera MIN_UPTIME_SECS reinicia el contador de fallos.
 #
 # Puede correr de dos maneras:
-#   - Como hijo de vac (PARALLELIZATION=true): sus logs van al journal de vac.service.
+#   - Como hijo de vac (PARALLEL_MODE=both): sus logs van al journal de vac.service.
 #   - Como servicio independiente (vac-sub.service): sus logs van a vac-sub.service.
 #
 # Guarda contra doble arranque: si ya existe una instancia viva, sale sin hacer nada.
@@ -23,6 +27,9 @@ load_all_conf
 
 SUB_DIR="/etc/vac/vac.sub"
 PIDFILE="/var/lib/vac/vac-sub-manager.pid"
+MAX_FAILS=5
+MIN_UPTIME_SECS=30
+
 mkdir -p "$(dirname "$PIDFILE")"
 
 # ---------------------------------------------------------------------------
@@ -54,7 +61,7 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 # ---------------------------------------------------------------------------
-# Lanzar sub-instancias
+# Lanzar sub-instancias (solo las que tienen .enabled)
 # ---------------------------------------------------------------------------
 if [[ ! -d "$SUB_DIR" ]]; then
     log "[PARALLEL] Directorio de sub-instancias no encontrado: $SUB_DIR"
@@ -62,23 +69,29 @@ if [[ ! -d "$SUB_DIR" ]]; then
     exit 0
 fi
 
+declare -A FAIL_COUNT
+declare -A START_TIME
+
 launched=0
 for instance_dir in "$SUB_DIR"/*/; do
     [[ -d "$instance_dir" ]] || continue
     name="$(basename "$instance_dir")"
-    [[ -f "${instance_dir}/vac.conf" ]] || continue
+    [[ -f "${instance_dir}/vac.conf" ]]  || continue
+    [[ -f "${instance_dir}/.enabled" ]]  || { log_debug "[PARALLEL] ${name}: sin .enabled — ignorada."; continue; }
 
     vas_host="$(grep -m1 '^VAS_HOST' "${instance_dir}/vac.conf" \
         | cut -d= -f2- | tr -d '"' | xargs 2>/dev/null || echo '?')"
 
     vac-sub "$name" &
     CHILD_PIDS[$name]=$!
-    log "[PARALLEL] Lanzado ${name}-vac, apuntando a ${vas_host} (PID ${CHILD_PIDS[$name]})"
+    FAIL_COUNT[$name]=0
+    START_TIME[$name]=$(date +%s)
+    log "[PARALLEL] Lanzado ${name}-vac → ${vas_host} (PID ${CHILD_PIDS[$name]})"
     (( ++launched ))
 done
 
 if [[ $launched -eq 0 ]]; then
-    log "[PARALLEL] Sin sub-instancias configuradas en $SUB_DIR"
+    log "[PARALLEL] Sin sub-instancias activas (.enabled) en $SUB_DIR"
     rm -f "$PIDFILE"
     exit 0
 fi
@@ -86,16 +99,33 @@ fi
 log "[PARALLEL] $launched sub-instancia(s) activa(s)."
 
 # ---------------------------------------------------------------------------
-# Bucle de supervisión: revisa cada 30s si algún hijo ha muerto
+# Bucle de supervisión
 # ---------------------------------------------------------------------------
 while true; do
     sleep 30
+    now=$(date +%s)
     for name in "${!CHILD_PIDS[@]}"; do
         pid="${CHILD_PIDS[$name]}"
         if ! kill -0 "$pid" 2>/dev/null; then
-            log "[PARALLEL] ${name}-vac ha terminado inesperadamente (PID $pid), reiniciando..."
+            uptime=$(( now - ${START_TIME[$name]:-now} ))
+            if (( uptime >= MIN_UPTIME_SECS )); then
+                # Fallo transitorio: proceso corrió un rato antes de morir
+                FAIL_COUNT[$name]=0
+                log "[PARALLEL] ${name}-vac (PID $pid) terminó tras ${uptime}s. Reiniciando..."
+            else
+                # Fallo rápido: posible error de configuración
+                FAIL_COUNT[$name]=$(( ${FAIL_COUNT[$name]:-0} + 1 ))
+                fails="${FAIL_COUNT[$name]}"
+                if (( fails >= MAX_FAILS )); then
+                    log "[PARALLEL] ${name}-vac falló ${fails} veces seguidas (uptime < ${MIN_UPTIME_SECS}s). Marcado como muerto."
+                    unset CHILD_PIDS[$name]
+                    continue
+                fi
+                log "[PARALLEL] ${name}-vac terminó en ${uptime}s (fallo $fails/$MAX_FAILS). Reiniciando..."
+            fi
             vac-sub "$name" &
             CHILD_PIDS[$name]=$!
+            START_TIME[$name]=$(date +%s)
             log "[PARALLEL] ${name}-vac relanzado (PID ${CHILD_PIDS[$name]})"
         fi
     done

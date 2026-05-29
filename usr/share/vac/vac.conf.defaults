@@ -88,13 +88,24 @@ LOG_LEVEL=normal
 # Paralelización (sub-instancias)
 # ---------------------------------------------------------------------------
 
-# Lanzar vac-sub-manager al arrancar VAC para gestionar sub-instancias.
+# ---------------------------------------------------------------------------
+# Paralelización (sub-instancias)
+# ---------------------------------------------------------------------------
+
+# Modo de paralelización. Las sub-instancias se definen en /etc/vac/vac.sub/<name>/
+# y solo se lanzan si la carpeta contiene vac.conf Y un fichero .enabled.
+# Para desactivar una instancia sin borrarla: rm /etc/vac/vac.sub/<name>/.enabled
+#
+# both          → bucle principal + sub-instancias (default).
+# only_parallel → solo sub-instancias; vac hace exec vac-sub-manager directamente.
+#                 Útil cuando este equipo solo actúa como punto de registro multi-VAS.
+# only_main     → solo bucle principal; vac-sub-manager no se lanza.
+#
 # Cada sub-instancia en /etc/vac/vac.sub/<name>/ registra en un VAS diferente
 # con UUID derivado (v5, determinista): mismo equipo + name = mismo UUID en VAS.
-# true  → vac arranca vac-sub-manager en background.
-# false → sin sub-instancias (default).
+# Crear instancia: vac-sub-instance --create NAME --vas IP_O_HOST
 # Ver: vac-sub.service para supervisor independiente sin instancia principal.
-PARALLELIZATION=false
+PARALLEL_MODE=both
 
 # ---------------------------------------------------------------------------
 # Transformación VAT

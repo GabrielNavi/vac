@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-DEFAULTS_FILE="/usr/share/vac/vac.conf.defaults"
+TEMPLATE_FILE="/usr/share/vac/instance-template/vac.conf"
 SUB_CONF_DIR="/etc/vac/vac.sub"
 SUB_STATE_DIR="/var/lib/vac/sub"
 
@@ -75,8 +75,8 @@ if [[ "$ACTION" == "create" ]]; then
         || { echo "Error: NAME solo puede contener letras, dígitos, - y _." >&2; exit 1; }
     [[ -z "$VAS_URL" ]] \
         && { echo "Error: --create requiere --vas URL." >&2; exit 1; }
-    [[ ! -f "$DEFAULTS_FILE" ]] \
-        && { echo "Error: no se encuentra $DEFAULTS_FILE." >&2; exit 1; }
+    [[ ! -f "$TEMPLATE_FILE" ]] \
+        && { echo "Error: no se encuentra $TEMPLATE_FILE." >&2; exit 1; }
 
     INSTANCE_DIR="${SUB_CONF_DIR}/${NAME}"
     if [[ -d "$INSTANCE_DIR" ]]; then
@@ -88,22 +88,18 @@ if [[ "$ACTION" == "create" ]]; then
     mkdir -p "${INSTANCE_DIR}/extras_imperative.d"
     mkdir -p "${INSTANCE_DIR}/extras_informative.d"
 
-    sed \
-        -e "s|^# Fichero de referencia.*|# Sub-instancia: ${NAME} — generado por vac-sub-instance|" \
-        -e "s|^# Configuración activa:.*|# Hereda /etc/vac/vac.conf; edita este fichero para sobreescribir.|" \
-        -e "s|^# Sobreescrituras:.*|# Sobreescrituras adicionales: ${INSTANCE_DIR}/vac.conf.d/*.conf|" \
-        -e "s|^VAS_HOST=.*|VAS_HOST=\"${VAS_URL}\"|" \
-        "$DEFAULTS_FILE" > "${INSTANCE_DIR}/vac.conf"
+    sed "s|^VAS_HOST=.*|VAS_HOST=${VAS_URL}|" \
+        "$TEMPLATE_FILE" > "${INSTANCE_DIR}/vac.conf"
 
-    echo "Sub-instancia '${NAME}' creada en ${INSTANCE_DIR}."
+    # Activar la instancia por defecto (rm .enabled para desactivar sin borrar)
+    touch "${INSTANCE_DIR}/.enabled"
+
+    echo "Sub-instancia '${NAME}' creada y activada en ${INSTANCE_DIR}."
     echo "  VAS_HOST:  ${VAS_URL}"
     echo "  vac.conf:  ${INSTANCE_DIR}/vac.conf"
+    echo "  .enabled:  ${INSTANCE_DIR}/.enabled (rm para desactivar)"
     echo ""
-    echo "Para activar:"
-    echo "  Si PARALLELIZATION=true en /etc/vac/vac.conf:"
-    echo "    systemctl restart vac.service"
-    echo "  Con supervisor independiente:"
-    echo "    systemctl restart vac-sub.service"
+    echo "Para aplicar: systemctl restart vac  (o vac-sub si usa el servicio independiente)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -147,8 +143,8 @@ if [[ "$ACTION" == "list" ]]; then
         exit 0
     fi
 
-    printf "%-20s %-42s %s\n" "NOMBRE" "VAS_HOST" "ESTADO"
-    printf "%-20s %-42s %s\n" "------" "--------" "------"
+    printf "%-20s %-42s %-10s %s\n" "NOMBRE" "VAS_HOST" "ENABLED" "ESTADO"
+    printf "%-20s %-42s %-10s %s\n" "------" "--------" "-------" "------"
 
     for instance_dir in "${SUB_CONF_DIR}"/*/; do
         [[ -d "$instance_dir" ]] || continue
@@ -157,6 +153,7 @@ if [[ "$ACTION" == "list" ]]; then
 
         vas_host="$(grep -m1 '^VAS_HOST' "${instance_dir}/vac.conf" \
             | cut -d= -f2- | tr -d '"' | xargs 2>/dev/null || echo '?')"
+        enabled="$( [[ -f "${instance_dir}/.enabled" ]] && echo "sí" || echo "no")"
 
         if pgrep -f "vac-sub ${name}$" >/dev/null 2>&1; then
             status="activa"
@@ -166,6 +163,6 @@ if [[ "$ACTION" == "list" ]]; then
             status="nueva"
         fi
 
-        printf "%-20s %-42s %s\n" "$name" "$vas_host" "$status"
+        printf "%-20s %-42s %-10s %s\n" "$name" "$vas_host" "$enabled" "$status"
     done
 fi

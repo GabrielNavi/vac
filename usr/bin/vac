@@ -58,17 +58,30 @@ log "EXTRAS_ENABLED: $EXTRAS_ENABLED"
 log "EXTRAS_TTL:     ${EXTRAS_TTL}s"
 log "SYNC_CLIENTS:   $SYNC_CLIENTS"
 log "STATE_DIR:      $STATE_DIR"
+log "PARALLEL_MODE:  $PARALLEL_MODE"
 log "USE_VAT:        $USE_VAT"
 [[ "$USE_VAT" == "true" ]] && log "VAT_PRESET:     $VAT_PRESET"
 
-if [[ "$PARALLELIZATION" == "true" ]]; then
-    if command -v vac-sub-manager >/dev/null 2>&1; then
-        vac-sub-manager &
-        log "[PARALLEL] vac-sub-manager lanzado (PID $!)"
-    else
-        log "[ERROR] PARALLELIZATION=true pero vac-sub-manager no encontrado. Continuando sin sub-instancias."
-    fi
-fi
+case "$PARALLEL_MODE" in
+    both|only_parallel)
+        if command -v vac-sub-manager >/dev/null 2>&1; then
+            if [[ "$PARALLEL_MODE" == "only_parallel" ]]; then
+                log "[PARALLEL] PARALLEL_MODE=only_parallel: ejecutando solo sub-instancias."
+                exec vac-sub-manager
+            fi
+            vac-sub-manager &
+            log "[PARALLEL] vac-sub-manager lanzado (PID $!)"
+        else
+            log "[ERROR] vac-sub-manager no encontrado. Continuando en modo only_main."
+        fi
+        ;;
+    only_main)
+        log_debug "[PARALLEL] PARALLEL_MODE=only_main: sub-instancias desactivadas."
+        ;;
+    *)
+        log "[WARN] PARALLEL_MODE inválido: '$PARALLEL_MODE'. Usando only_main."
+        ;;
+esac
 
 # Variables de ciclo inicializadas para evitar referencias antes de asignación.
 LOC_HOST=""
