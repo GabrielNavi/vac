@@ -94,6 +94,7 @@ mkdir -p "$STATE_DIR"
 
 if [[ ! -f "$ID_FILE" ]]; then
     if [[ -n "$NAME" ]]; then
+        [[ -f /etc/vac/vac-id ]] || { log "ERROR: /etc/vac/vac-id no existe. ¿Arrancó vac.service alguna vez?"; exit 1; }
         BASE_UUID="$(tr -d '[:space:]' < /etc/vac/vac-id)"
         uuidgen --sha1 --namespace "${BASE_UUID}" --name "${NAME}" > "$ID_FILE"
         chmod 600 "$ID_FILE"

@@ -1,3 +1,15 @@
+vx-dga-l-vac (0.9-13~rc) unstable; urgency=low
+
+  * vac, vac-sub: lectura de VERSION_FILE con || echo "0" para sobrevivir
+    a purge concurrente o arranque en tmpfs sin fichero existente.
+  * vac, vac-sub: save_identity con || log "[WARN]..." en todos los puntos
+    del bucle principal para evitar abort bajo set -e si el disco está lleno
+    o hay problemas de permisos en /var/lib/vac/.
+  * vac-register: verificación explícita de /etc/vac/vac-id antes de leer
+    para --name, con mensaje de error descriptivo.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Thu, 29 May 2026 10:00:00 +0200
+
 vx-dga-l-vac (0.9-12~rc) unstable; urgency=low
 
   * debian/control: Suggests: vx-dga-l-vat.

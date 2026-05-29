@@ -226,7 +226,7 @@ while true; do
     collect_extras
 
     if register_client "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" > /dev/null; then
-        save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF"
+        save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" || log "[WARN] No se pudo guardar identity.json; continuando."
         log "[STARTUP] Registro inicial completado."
 
         remote_ver="$(get_remote_version)"
@@ -292,11 +292,11 @@ while true; do
                 sleep "$RETRY_SECONDS"
                 continue
             fi
-            save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF"
+            save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" || log "[WARN] No se pudo guardar identity.json; continuando."
             LAST_HB_TS=$now   # el registro actualiza last_seen en VAS
         fi
 
-        local_version="$(tr -d '[:space:]' < "$VERSION_FILE")"
+        local_version="$(tr -d '[:space:]' < "$VERSION_FILE" 2>/dev/null || echo "0")"
         log_debug "[VERSION] Local: $local_version"
 
         remote_version_raw="$(get_remote_version)"
@@ -341,7 +341,7 @@ while true; do
                 sleep "$RETRY_SECONDS"
                 continue
             fi
-            save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF"
+            save_identity "$LOC_HOST" "$LOC_IP" "$LOC_MAC" "$EXTRA_IMP" "$EXTRA_INF" || log "[WARN] No se pudo guardar identity.json; continuando."
             LAST_CHECK_TS=$now   # el registro confirma identidad; evitar check redundante
         fi
         LAST_HB_TS=$now
