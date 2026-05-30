@@ -23,7 +23,9 @@
 
 set -euo pipefail
 
+# shellcheck disable=SC2034  # LOG_TAG es usado por log()/log_debug() en vac-common.sh
 LOG_TAG="[VAC]"
+# shellcheck source=/usr/lib/vac/vac-common.sh
 source /usr/lib/vac/vac-common.sh
 
 # ---------------------------------------------------------------------------
@@ -41,12 +43,20 @@ if [[ ! -f "$ID_FILE" ]]; then
     log "UUID generado: $(cat "$ID_FILE")"
 fi
 
+# Validar que el UUID tiene formato correcto; regenerar si está corrupto
+CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
+if [[ ! "$CLIENT_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    log "[WARN] vac-id contiene un valor inválido ('$CLIENT_ID'). Regenerando UUID."
+    uuidgen > "$ID_FILE"
+    chmod 600 "$ID_FILE"
+    CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
+    log "Nuevo UUID generado: $CLIENT_ID"
+fi
+
 if [[ ! -f "$VERSION_FILE" ]]; then
     echo "0" > "$VERSION_FILE"
     log "Fichero de versión inicializado: $VERSION_FILE → 0"
 fi
-
-CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
 
 log "=== Iniciando VAC ==="
 log "UUID:           $CLIENT_ID"

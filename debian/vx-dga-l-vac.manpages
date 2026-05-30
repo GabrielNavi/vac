@@ -1,0 +1,5 @@
+debian/man/vac.8
+debian/man/vac-register.8
+debian/man/vac-sub.8
+debian/man/vac-sub-manager.8
+debian/man/vac-sub-instance.8

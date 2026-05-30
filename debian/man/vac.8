@@ -1,0 +1,158 @@
+.TH VAC 8 "2026-05-30" "vx-dga-l-vac" "System Administration"
+.SH NAME
+vac \- Versatile Autoregistration Client daemon
+.SH SYNOPSIS
+.B vac
+.SH DESCRIPTION
+.B vac
+is a systemd service that automatically registers the local machine in a
+.BR vas (8)
+server and keeps a local copy of the network inventory.
+.PP
+On startup,
+.B vac
+waits for
+.B VAS_HOST
+to be defined, performs a blocking initial registration, then enters a
+polling loop driven by two independent timers:
+.TP
+.B CHECK_SECONDS
+Runs a local self-check (hostname, IP, MAC, extra fields) comparing
+current values against
+.IR /var/lib/vac/identity.json .
+If anything has changed the client sends
+.BR "POST /register" ;
+otherwise it sends
+.BR "POST /heartbeat" .
+After the self-check, the local version is compared with
+.BR "GET /version" ;
+if a new version is available the inventory is downloaded and
+.I identity.json
+is refreshed from
+.BR "GET /clients/{uuid}" .
+.TP
+.B HEARTBEAT_SECONDS
+Sends a lightweight
+.B POST /heartbeat
+independently of the self-check cycle.
+A 404 response triggers an immediate re-registration.
+If unset, this timer uses the same interval as
+.BR CHECK_SECONDS .
+.PP
+Sub-instances for registering in additional VAS servers can be managed
+with
+.BR vac-sub-instance (8)
+and are supervised by
+.BR vac-sub-manager (8).
+.SH EXTRA FIELDS
+Two dictionaries of arbitrary key-value pairs can be attached to each
+registration:
+.TP
+.B extra_imperative
+Changes to this dictionary bump the inventory version on
+.BR vas (8),
+causing all consumers to re-fetch.
+Scripts placed in
+.I /etc/vac/extras_imperative.d/
+are executed each cycle; their JSON output is stored under the script's
+basename (without extension) as the key.
+.TP
+.B extra_informative
+Purely informational. Changes never bump the version.
+Scripts are placed in
+.IR /etc/vac/extras_informative.d/ .
+.SH CONFIGURATION
+.B vac
+reads
+.I /etc/vac/vac.conf
+and overlays in
+.IR /etc/vac/vac.conf.d/ .
+Key variables:
+.TP
+.B VAS_HOST
+Hostname or IP of the VAS server. The port defaults to
+.B 8000
+if omitted.
+.TP
+.B VAS_SCHEME
+Protocol scheme:
+.B http
+(default) or
+.BR https .
+.TP
+.B CHECK_SECONDS
+Self-check interval in seconds (default:
+.BR 300 ).
+.TP
+.B HEARTBEAT_SECONDS
+Independent liveness interval (default: same as
+.BR CHECK_SECONDS ).
+.TP
+.B SYNC_CLIENTS
+If
+.BR true ,
+download the full inventory to
+.I /var/lib/vac/clients.json
+whenever a new version is detected (default:
+.BR true ).
+.TP
+.B EXTRAS_ENABLED
+Enable the extra-fields subsystem (default:
+.BR false ).
+.TP
+.B PARALLEL_MODE
+Controls sub-instance parallelism:
+.B both
+(default),
+.BR only_parallel ,
+or
+.BR only_main .
+.TP
+.B LOG_LEVEL
+Log verbosity:
+.B no
+|
+.B normal
+|
+.B debug
+(default:
+.BR normal ).
+.SH FILES
+.TP
+.I /etc/vac/vac.conf
+Main configuration file.
+.TP
+.I /etc/vac/vac.conf.d/
+Drop-in configuration overlays.
+.TP
+.I /etc/vac/vac-id
+Persistent UUID assigned to this machine (mode 0600).
+.TP
+.I /etc/vac/extras_imperative.d/
+Scripts producing imperative extra fields (JSON output, 10 s timeout).
+.TP
+.I /etc/vac/extras_informative.d/
+Scripts producing informative extra fields.
+.TP
+.I /var/lib/vac/clients.json
+Local copy of the network inventory (when
+.BR SYNC_CLIENTS=true ).
+.TP
+.I /var/lib/vac/identity.json
+The last confirmed registration data used for self-check comparisons.
+.TP
+.I /var/lib/vac/version
+The inventory version last seen from VAS.
+.TP
+.I /usr/share/vac/vac.conf.defaults
+Reference copy of all configuration variables with documentation.
+.SH SEE ALSO
+.BR vac-register (8),
+.BR vac-sub (8),
+.BR vac-sub-manager (8),
+.BR vac-sub-instance (8),
+.BR vas (8),
+.BR val (8),
+.BR systemctl (1)
+.SH AUTHOR
+Gabriel Navia <correos@gabrielnav.es>

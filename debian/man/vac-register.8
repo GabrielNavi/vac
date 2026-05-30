@@ -1,0 +1,88 @@
+.TH VAC-REGISTER 8 "2026-05-30" "vx-dga-l-vac" "System Administration"
+.SH NAME
+vac-register \- Point-in-time registration and extra-field management for VAC
+.SH SYNOPSIS
+.B vac-register
+.RB [ \-\-imperative | \-\-informative ]
+.B \-\-key
+.I KEY
+.RB { source | \-d }
+.br
+.B vac-register
+.RB [ \-\-name
+.IR NAME ]
+.SH DESCRIPTION
+.B vac-register
+performs a one-shot self-check and registration against the VAS server
+configured in
+.IR /etc/vac/vac.conf .
+If the current hostname, IP, MAC and extra fields match
+.IR /var/lib/vac/identity.json ,
+no request is sent.
+.PP
+It is also used to insert, update, or delete individual keys in the
+persistent extra-field state without waiting for the next
+.BR vac (8)
+cycle.
+.SH OPTIONS
+.TP
+.B \-\-imperative
+Operate on the
+.B extra_imperative
+dictionary. Changes to this dictionary bump the VAS inventory version.
+.TP
+.B \-\-informative
+Operate on the
+.B extra_informative
+dictionary. Changes never bump the version.
+.TP
+.BI \-\-key " KEY"
+The extra-field key to insert, update, or delete.
+.TP
+.I source
+Path to a file containing the JSON value for
+.IR KEY ,
+or
+.B \-
+to read from standard input.
+.TP
+.B \-d
+Delete
+.I KEY
+from the selected dictionary.
+.TP
+.BI \-\-name " NAME"
+Operate on sub-instance
+.I NAME
+instead of the main instance.
+.SH EXAMPLES
+Set a key in the imperative dictionary from a file:
+.PP
+.RS
+.nf
+vac-register \-\-imperative \-\-key cups /tmp/cups.json
+.fi
+.RE
+.PP
+Delete a key from the informative dictionary:
+.PP
+.RS
+.nf
+vac-register \-\-informative \-\-key hardware \-d
+.fi
+.RE
+.SH FILES
+.TP
+.I /etc/vac/vac.conf
+Configuration file shared with
+.BR vac (8).
+.TP
+.I /var/lib/vac/extras_imperative.json
+.TQ
+.I /var/lib/vac/extras_informative.json
+Persistent extra-field state with per-key timestamps.
+.SH SEE ALSO
+.BR vac (8),
+.BR vac-sub-instance (8)
+.SH AUTHOR
+Gabriel Navia <correos@gabrielnav.es>

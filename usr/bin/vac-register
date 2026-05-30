@@ -22,7 +22,9 @@
 
 set -euo pipefail
 
+# shellcheck disable=SC2034  # LOG_TAG y rutas usadas por vac-common.sh
 LOG_TAG="[VAC-REGISTER]"
+# shellcheck source=/usr/lib/vac/vac-common.sh
 source /usr/lib/vac/vac-common.sh
 
 # ---------------------------------------------------------------------------
@@ -71,17 +73,28 @@ if [[ -n "$NAME" ]]; then
     fi
     STATE_DIR="/var/lib/vac/sub/${NAME}"
     CONF_FILE="${INSTANCE_DIR}/vac.conf"
+    # shellcheck disable=SC2034  # Rutas de instancia heredadas por vac-common.sh vía :-
     CONF_DIR="${INSTANCE_DIR}/vac.conf.d"
+    # shellcheck disable=SC2034
     EXTRAS_IMPERATIVE_HOOKS_DIR="${INSTANCE_DIR}/extras_imperative.d"
+    # shellcheck disable=SC2034
     EXTRAS_INFORMATIVE_HOOKS_DIR="${INSTANCE_DIR}/extras_informative.d"
+    # shellcheck disable=SC2034
     VERSION_FILE="${STATE_DIR}/version"
+    # shellcheck disable=SC2034
     CLIENTS_FILE="${STATE_DIR}/clients.json"
+    # shellcheck disable=SC2034
     TMP_CLIENTS="${STATE_DIR}/clients.json.tmp"
+    # shellcheck disable=SC2034
     IDENTITY_FILE="${STATE_DIR}/identity.json"
+    # shellcheck disable=SC2034
     TMP_IDENTITY="${STATE_DIR}/identity.json.tmp"
+    # shellcheck disable=SC2034
     EXTRAS_IMP_FILE="${STATE_DIR}/extras_imperative.json"
+    # shellcheck disable=SC2034
     EXTRAS_INF_FILE="${STATE_DIR}/extras_informative.json"
     ID_FILE="${STATE_DIR}/vac-id"
+    # shellcheck disable=SC2034
     LOG_TAG="[${NAME^^}-VAC-REGISTER]"
 fi
 
@@ -89,6 +102,7 @@ fi
 # Inicialización
 # ---------------------------------------------------------------------------
 load_all_conf
+_normalize_vas_host
 
 mkdir -p "$STATE_DIR"
 

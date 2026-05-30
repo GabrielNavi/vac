@@ -1,10 +1,24 @@
+vx-dga-l-vac (0.9-17~rc) unstable; urgency=low
+
+  * vac: valida el UUID local y lo regenera si está corrupto; vac-register y
+    vac-sub reaplican la normalización de VAS_HOST tras cargar la
+    configuración, por lo que VAS_HOST con scheme sigue funcionando también
+    en instancias y subinstancias.
+  * vac-sub: valida el UUID derivado de la subinstancia y lo regenera si es
+    inválido. Se añaden manpages para vac, vac-register, vac-sub,
+    vac-sub-manager y vac-sub-instance.
+  * Paquetería: ajustados los scripts systemd, dependencias y metadatos del
+    paquete para dejar lintian en estado limpio/pedantic.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Sat, 30 May 2026 19:00:00 +0200
+
 vx-dga-l-vac (0.9-16~rc) unstable; urgency=low
 
   * vac-common.sh: PARALLELIZATION eliminado (no se lee). Nuevo PARALLEL_MODE
     (both|only_parallel|only_main, default: both).
-  * vac: PARALLEL_MODE=only_parallel hace exec vac-sub-manager (main silenciado);
-    both lanza el manager en background + continúa el bucle principal;
-    only_main no lanza el manager. Añadido PARALLEL_MODE al startup log.
+  * vac: PARALLEL_MODE=only_parallel hace exec vac-sub-manager (main
+    silenciado); both lanza el manager en background + continúa el bucle
+    principal; only_main no lanza el manager. Añadido PARALLEL_MODE al log.
   * vac-sub-manager: solo lanza sub-instancias con .enabled. Fail counter con
     MAX_FAILS=5 y MIN_UPTIME_SECS=30: instancias que mueren repetidamente en
     menos de 30s se marcan como muertas y dejan de reiniciarse.
@@ -15,7 +29,7 @@ vx-dga-l-vac (0.9-16~rc) unstable; urgency=low
   * vac.conf, vac.conf.defaults: PARALLELIZATION sustituido por PARALLEL_MODE.
   * debian/install: añadido instance-template/vac.conf.
 
- -- Gabriel Navia <correos@gabrielnav.es>  Fri, 30 May 2026 12:00:00 +0200
+ -- Gabriel Navia <correos@gabrielnav.es>  Sat, 30 May 2026 12:00:00 +0200
 
 vx-dga-l-vac (0.9-15~rc) unstable; urgency=low
 

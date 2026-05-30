@@ -1,3 +1,5 @@
+# shellcheck shell=bash
+# shellcheck disable=SC2034  # Librería: variables definidas aquí son usadas por los scripts que la sourcean
 # vac-common.sh — Funciones compartidas entre vac y vac-register.
 #
 # Uso: source /usr/lib/vac/vac-common.sh
@@ -20,6 +22,7 @@ CONF_DIR="${CONF_DIR:-/etc/vac/vac.conf.d}"
 ID_FILE="${ID_FILE:-/etc/vac/vac-id}"
 STATE_DIR="${STATE_DIR:-/var/lib/vac}"
 
+# shellcheck disable=SC2034  # Usadas por los scripts que sourcean esta librería
 VERSION_FILE="${STATE_DIR}/version"
 CLIENTS_FILE="${STATE_DIR}/clients.json"
 TMP_CLIENTS="${STATE_DIR}/clients.json.tmp"

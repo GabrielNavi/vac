@@ -21,7 +21,9 @@
 
 set -euo pipefail
 
+# shellcheck disable=SC2034  # LOG_TAG es usado por log()/log_debug() en vac-common.sh
 LOG_TAG="[VAC]"
+# shellcheck source=/usr/lib/vac/vac-common.sh
 source /usr/lib/vac/vac-common.sh
 load_all_conf
 
@@ -118,7 +120,7 @@ while true; do
                 fails="${FAIL_COUNT[$name]}"
                 if (( fails >= MAX_FAILS )); then
                     log "[PARALLEL] ${name}-vac falló ${fails} veces seguidas (uptime < ${MIN_UPTIME_SECS}s). Marcado como muerto."
-                    unset CHILD_PIDS[$name]
+                    unset "CHILD_PIDS[$name]"
                     continue
                 fi
                 log "[PARALLEL] ${name}-vac terminó en ${uptime}s (fallo $fails/$MAX_FAILS). Reiniciando..."

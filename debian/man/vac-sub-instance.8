@@ -1,0 +1,65 @@
+.TH VAC-SUB-INSTANCE 8 "2026-05-30" "vx-dga-l-vac" "System Administration"
+.SH NAME
+vac-sub-instance \- Lifecycle management for VAC sub-instances
+.SH SYNOPSIS
+.B vac-sub-instance \-\-create
+.I NAME
+.BI \-\-vas " URL"
+.br
+.B vac-sub-instance \-\-delete
+.I NAME
+.br
+.B vac-sub-instance \-\-list
+.SH DESCRIPTION
+.B vac-sub-instance
+creates, deletes, and lists
+.BR vac-sub (8)
+instances. Each sub-instance registers the local machine in a different
+VAS server under a deterministic UUID derived from the instance name.
+.SH OPTIONS
+.TP
+.BI \-\-create " NAME " \-\-vas " URL"
+Creates a new sub-instance named
+.I NAME
+pointing to the VAS server at
+.IR URL .
+The configuration skeleton is copied from
+.I /usr/share/vac/instance-template/vac.conf
+and written to
+.IR /etc/vac/vac.sub/NAME/ .
+A
+.I .enabled
+marker is created so
+.BR vac-sub-manager (8)
+starts the instance immediately on the next scan.
+.TP
+.BI \-\-delete " NAME"
+Removes the configuration and state for sub-instance
+.IR NAME .
+Aborts if the
+.BR vac-sub (8)
+process is currently active.
+.TP
+.B \-\-list
+Displays a table with each sub-instance's name, VAS host, and current
+status (active / stopped / new).
+.SH FILES
+.TP
+.I /etc/vac/vac.sub/NAME/vac.conf
+Sub-instance configuration.
+.TP
+.I /etc/vac/vac.sub/NAME/.enabled
+Enables the sub-instance in
+.BR vac-sub-manager (8).
+.TP
+.I /var/lib/vac/sub/NAME/
+Runtime state directory.
+.TP
+.I /usr/share/vac/instance-template/vac.conf
+Template used when creating new sub-instances.
+.SH SEE ALSO
+.BR vac-sub (8),
+.BR vac-sub-manager (8),
+.BR vac (8)
+.SH AUTHOR
+Gabriel Navia <correos@gabrielnav.es>

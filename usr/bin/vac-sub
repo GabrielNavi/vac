@@ -46,8 +46,9 @@ CONF_DIR="${INSTANCE_DIR}/vac.conf.d"
 EXTRAS_IMPERATIVE_HOOKS_DIR="${INSTANCE_DIR}/extras_imperative.d"
 EXTRAS_INFORMATIVE_HOOKS_DIR="${INSTANCE_DIR}/extras_informative.d"
 ID_FILE="${STATE_DIR}/vac-id"
+# shellcheck disable=SC2034  # LOG_TAG es usado por log()/log_debug() en vac-common.sh
 LOG_TAG="[${NAME^^}-VAC]"
-
+# shellcheck source=/usr/lib/vac/vac-common.sh
 source /usr/lib/vac/vac-common.sh
 
 # ---------------------------------------------------------------------------
@@ -63,6 +64,9 @@ if [[ -d "$CONF_DIR" ]]; then
 fi
 _normalize_vas_host
 : "${HEARTBEAT_SECONDS:=$CHECK_SECONDS}"
+# Re-aplicar rutas de instancia: load_conf hereda vac.conf y puede sobreescribirlas.
+EXTRAS_IMPERATIVE_HOOKS_DIR="${INSTANCE_DIR}/extras_imperative.d"
+EXTRAS_INFORMATIVE_HOOKS_DIR="${INSTANCE_DIR}/extras_informative.d"
 
 # ---------------------------------------------------------------------------
 # Inicialización
@@ -77,12 +81,20 @@ if [[ ! -f "$ID_FILE" ]]; then
     log "UUID derivado generado: $(cat "$ID_FILE") (base=${BASE_UUID} name=${NAME})"
 fi
 
+CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
+if [[ ! "$CLIENT_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    log "[WARN] ID de sub-instancia '$NAME' inválido ('$CLIENT_ID'). Regenerando."
+    BASE_UUID="$(tr -d '[:space:]' < /etc/vac/vac-id)"
+    uuidgen --sha1 --namespace "${BASE_UUID}" --name "${NAME}" > "$ID_FILE"
+    chmod 600 "$ID_FILE"
+    CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
+    log "UUID regenerado: $CLIENT_ID"
+fi
+
 if [[ ! -f "$VERSION_FILE" ]]; then
     echo "0" > "$VERSION_FILE"
     log "Fichero de versión inicializado: $VERSION_FILE → 0"
 fi
-
-CLIENT_ID="$(tr -d '[:space:]' < "$ID_FILE")"
 
 log "=== Iniciando ${NAME}-vac ==="
 log "UUID:           $CLIENT_ID"

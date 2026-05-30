@@ -1,0 +1,44 @@
+.TH VAC-SUB-MANAGER 8 "2026-05-30" "vx-dga-l-vac" "System Administration"
+.SH NAME
+vac-sub-manager \- Supervisor for VAC sub-instance daemons
+.SH SYNOPSIS
+.B vac-sub-manager
+.SH DESCRIPTION
+.B vac-sub-manager
+scans
+.I /etc/vac/vac.sub/
+for sub-instance directories that contain both a
+.I vac.conf
+file and a
+.I .enabled
+marker, then launches one
+.BR vac-sub (8)
+process per discovered sub-instance.
+.PP
+It monitors child processes every 30 seconds and restarts any that have
+died. An instance that exits repeatedly in less than
+.B MIN_UPTIME_SECS
+(30 s) seconds increments a failure counter; after
+.B MAX_FAILS
+(5) consecutive failures the sub-instance is marked dead and no longer
+restarted, preventing restart loops from consuming resources.
+.PP
+.B vac-sub-manager
+protects against being started twice by writing a PID file to
+.IR /var/lib/vac/vac-sub-manager.pid .
+SIGTERM and SIGINT are propagated to all child processes.
+.PP
+It is normally launched automatically by
+.BR vac (8)
+when
+.B PARALLEL_MODE
+is set to
+.B both
+or
+.BR only_parallel .
+.SH SEE ALSO
+.BR vac (8),
+.BR vac-sub (8),
+.BR vac-sub-instance (8)
+.SH AUTHOR
+Gabriel Navia <correos@gabrielnav.es>

@@ -1,0 +1,49 @@
+.TH VAC-SUB 8 "2026-05-30" "vx-dga-l-vac" "System Administration"
+.SH NAME
+vac-sub \- VAC sub-instance daemon for multi-server registration
+.SH SYNOPSIS
+.B vac-sub
+.I NAME
+.SH DESCRIPTION
+.B vac-sub
+runs the full VAC registration loop for a named sub-instance, enabling
+a single machine to register simultaneously in multiple VAS servers.
+.PP
+It inherits the base configuration from
+.I /etc/vac/vac.conf
+and overrides it with
+.IR /etc/vac/vac.sub/NAME/vac.conf .
+State is kept independently in
+.IR /var/lib/vac/sub/NAME/ .
+.PP
+The sub-instance UUID is derived deterministically using UUID v5
+(SHA-1, namespace = main UUID, name = NAME), so the same machine and
+name always produce the same UUID on the VAS server.
+.PP
+Log messages are prefixed with
+.BI [ NAME-VAC ]
+to allow filtering with
+.IR journalctl .
+.PP
+.B vac-sub
+is normally launched and supervised by
+.BR vac-sub-manager (8).
+It can also be run standalone via
+.BR vac-sub.service (8).
+.SH FILES
+.TP
+.I /etc/vac/vac.sub/NAME/vac.conf
+Sub-instance configuration (overrides base config).
+.TP
+.I /etc/vac/vac.sub/NAME/.enabled
+Presence of this file enables the sub-instance in
+.BR vac-sub-manager (8).
+.TP
+.I /var/lib/vac/sub/NAME/
+State directory: UUID, version, identity, extras.
+.SH SEE ALSO
+.BR vac (8),
+.BR vac-sub-manager (8),
+.BR vac-sub-instance (8)
+.SH AUTHOR
+Gabriel Navia <correos@gabrielnav.es>
