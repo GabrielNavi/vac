@@ -8,7 +8,7 @@ vx-dga-l-vac (0.9-17~rc) unstable; urgency=low
     inválido. Se añaden manpages para vac, vac-register, vac-sub,
     vac-sub-manager y vac-sub-instance.
   * Paquetería: ajustados los scripts systemd, dependencias y metadatos del
-    paquete para dejar lintian en estado limpio/pedantic.
+    paquete para dejar lintian en estado limpio.
 
  -- Gabriel Navia <correos@gabrielnav.es>  Sat, 30 May 2026 19:00:00 +0200
 
