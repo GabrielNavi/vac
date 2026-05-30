@@ -2,11 +2,7 @@
 set -e
 
 if [ "$1" = "purge" ]; then
-    rm -rf /etc/vac
-    rm -rf /var/lib/vac
-    rm -rf /var/log/vac
+    rm -rf /etc/vac /var/lib/vac /var/log/vac
 fi
 
-systemctl daemon-reload || true
-
-exit 0
+#DEBHELPER#

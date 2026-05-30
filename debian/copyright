@@ -1,9 +1,10 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: vx-dga-l-vac
+Upstream-Contact: Gabriel Navia <correos@gabrielnav.es>
 Source: local
 
 Files: *
-Copyright: 2026 Gabriel Navia
+Copyright: 2026 Gabriel Navia <correos@gabrielnav.es>
 License: Apache-2.0
  .
  On Debian systems, the complete text of the Apache License, Version 2.0

@@ -1,33 +1,17 @@
 #!/bin/sh
 set -e
 
-echo "[VAC] Ejecutando postinst..."
+case "$1" in
+    configure)
+        mkdir -p /etc/vac/vac.conf.d /etc/vac/extras_imperative.d \
+                 /etc/vac/extras_informative.d /etc/vac/vac.sub \
+                 /var/lib/vac/sub /var/log/vac
 
-mkdir -p /etc/vac
-mkdir -p /etc/vac/vac.conf.d
-mkdir -p /etc/vac/extras_imperative.d
-mkdir -p /etc/vac/extras_informative.d
-mkdir -p /etc/vac/vac.sub
-mkdir -p /var/lib/vac
-mkdir -p /var/lib/vac/sub
-mkdir -p /var/log/vac
+        if [ ! -f /etc/vac/vac-id ]; then
+            uuidgen > /etc/vac/vac-id
+            chmod 600 /etc/vac/vac-id
+        fi
+        ;;
+esac
 
-if [ ! -f /etc/vac/vac-id ]; then
-    uuidgen > /etc/vac/vac-id
-    chmod 600 /etc/vac/vac-id
-fi
-
-systemctl daemon-reload || true
-systemctl enable vac.service || true
-
-if [ "$1" = "configure" ]; then
-    if [ -n "${2:-}" ]; then
-        systemctl restart vac.service || true
-    else
-        systemctl start vac.service || true
-    fi
-fi
-
-echo "[VAC] Instalacion completada."
-
-exit 0
+#DEBHELPER#

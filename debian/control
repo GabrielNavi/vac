@@ -7,7 +7,7 @@ Section: admin
 
 Package: vx-dga-l-vac
 Architecture: all
-Depends: bash, curl, jq, uuid-runtime, iproute2
+Depends: bash, curl, jq, uuid-runtime, iproute2, ${misc:Depends}
 Suggests: vx-dga-l-vat
 Description: Cliente de Autorregistro Versátil (VAC)
  Cliente Bash que registra el equipo en VAS y mantiene una copia local
