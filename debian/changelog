@@ -32,7 +32,7 @@ vx-dga-l-vac (0.9-15~rc) unstable; urgency=low
 
  -- Gabriel Navia <correos@gabrielnav.es>  Thu, 29 May 2026 18:00:00 +0200
 
-vx-dga-l-vac (0.9-14~rc) unstable; urgency=low
+vx-dga-l-vac (0.9-14) unstable; urgency=low
 
   * vac: corregido doble collect_extras() en el mismo tick.
     Si selfcheck (paso 1) y heartbeat fallido (paso 2) coinciden en la misma
@@ -42,7 +42,7 @@ vx-dga-l-vac (0.9-14~rc) unstable; urgency=low
 
  -- Gabriel Navia <correos@gabrielnav.es>  Thu, 29 May 2026 15:30:00 +0200
 
-vx-dga-l-vac (0.9-13~rc) unstable; urgency=low
+vx-dga-l-vac (0.9-13) unstable; urgency=low
 
   * vac, vac-sub: lectura de VERSION_FILE con || echo "0" para sobrevivir
     a purge concurrente o arranque en tmpfs sin fichero existente.
@@ -54,14 +54,14 @@ vx-dga-l-vac (0.9-13~rc) unstable; urgency=low
 
  -- Gabriel Navia <correos@gabrielnav.es>  Thu, 29 May 2026 10:00:00 +0200
 
-vx-dga-l-vac (0.9-12~rc) unstable; urgency=low
+vx-dga-l-vac (0.9-12) unstable; urgency=low
 
   * debian/control: Suggests: vx-dga-l-vat.
   * README.md, wiki Configuracion.md: documentados USE_VAT y VAT_PRESET.
 
  -- Gabriel Navia <correos@gabrielnav.es>  Wed, 28 May 2026 21:00:00 +0200
 
-vx-dga-l-vac (0.9-11~rc) unstable; urgency=low
+vx-dga-l-vac (0.9-11) unstable; urgency=low
 
   * Integración opcional con vx-dga-l-vat (Versatile Autoregistration Transformer).
   * vac-common.sh: nuevas variables USE_VAT y VAT_PRESET en defaults y parser.
@@ -72,7 +72,7 @@ vx-dga-l-vac (0.9-11~rc) unstable; urgency=low
 
  -- Gabriel Navia <correos@gabrielnav.es>  Wed, 28 May 2026 20:00:00 +0200
 
-vx-dga-l-vac (0.9-10~rc) unstable; urgency=low
+vx-dga-l-vac (0.9-10) unstable; urgency=low
 
   * Nueva variable HEARTBEAT_SECONDS: desacopla la señal de liveness (POST
     /heartbeat) del ciclo de selfcheck y versión (CHECK_SECONDS). El bucle
@@ -94,7 +94,7 @@ vx-dga-l-vac (0.9-10~rc) unstable; urgency=low
 
  -- Gabriel Navia <correos@gabrielnav.es>  Wed, 28 May 2026 16:00:00 +0200
 
-vx-dga-l-vac (0.9-9~rc) unstable; urgency=low
+vx-dga-l-vac (0.9-9) unstable; urgency=low
 
   * vac-common.sh: build_extras_merge() corregido para que un fallo de jq
     (JSON corrupto o ilegible) devuelva "" (COALESCE, conserva valor previo
@@ -106,7 +106,7 @@ vx-dga-l-vac (0.9-9~rc) unstable; urgency=low
 
  -- Gabriel Navia <correos@gabrielnav.es>  Wed, 28 May 2026 14:30:00 +0200
 
-vx-dga-l-vac (0.9-8~rc) stable; urgency=medium
+vx-dga-l-vac (0.9-8) stable; urgency=medium
 
   * vac-register --name: corregida generación de UUID cuando la sub-instancia
     no tenía vac-id aún. Ahora usa UUID v5 derivado (sha1, namespace=base-uuid,
@@ -117,7 +117,7 @@ vx-dga-l-vac (0.9-8~rc) stable; urgency=medium
 
  -- Gabriel Navia <correos@gabrielnav.es>  Wed, 28 May 2026 12:00:00 +0200
 
-vx-dga-l-vac (0.9-7~rc) stable; urgency=medium
+vx-dga-l-vac (0.9-7) stable; urgency=medium
 
   * Paralelización: soporte de múltiples sub-instancias VAC en un mismo equipo,
     cada una registrando en un VAS diferente con UUID propio.
@@ -150,7 +150,7 @@ vx-dga-l-vac (0.9-7~rc) stable; urgency=medium
 
  -- Gabriel Navia <correos@gabrielnav.es>  Tue, 27 May 2026 18:00:00 +0200
 
-vx-dga-l-vac (0.9-6~rc) unstable; urgency=medium
+vx-dga-l-vac (0.9-6) unstable; urgency=medium
 
   * Sistema de extras multi-fuente con estado por clave (extras_imperative.json /
     extras_informative.json en /var/lib/vac/).
@@ -182,13 +182,13 @@ vx-dga-l-vac (0.9-6~rc) unstable; urgency=medium
 
  -- Gabriel Navia <correos@gabrielnav.es>  Tue, 27 May 2026 12:00:00 +0200
 
-vx-dga-l-vac (0.9-5~rc) unstable; urgency=low
+vx-dga-l-vac (0.9-5) unstable; urgency=low
 
   * prerm: stop/disable solo en remove, no en upgrade (pariedad con VAL y veyon-sync).
 
  -- Gabriel Navia <correos@gabrielnav.es>  Fri, 15 May 2026 12:00:00 +0200
 
-vx-dga-l-vac (0.9-4~rc) unstable; urgency=low
+vx-dga-l-vac (0.9-4) unstable; urgency=low
 
   * Añadido /usr/share/vac/vac.conf.defaults: copia de referencia de la
     configuración por defecto, siempre actualizada en upgrade.
@@ -199,7 +199,7 @@ vx-dga-l-vac (0.9-4~rc) unstable; urgency=low
 
  -- Gabriel Navia <correos@gabrielnav.es>  Fri, 15 May 2026 12:00:00 +0200
 
-vx-dga-l-vac (0.9-3~rc) unstable; urgency=low
+vx-dga-l-vac (0.9-3) unstable; urgency=low
 
   * Compatibilidad con el nuevo formato de versión YYYYMMDDHHMMSSmmm de VAS.
     La validación ^[0-9]+$ ya acepta cualquier longitud numérica; sin cambios
@@ -207,7 +207,7 @@ vx-dga-l-vac (0.9-3~rc) unstable; urgency=low
 
  -- Gabriel Navia <correos@gabrielnav.es>  Thu, 14 May 2026 17:00:00 +0200
 
-vx-dga-l-vac (0.9-2~rc) unstable; urgency=low
+vx-dga-l-vac (0.9-2) unstable; urgency=low
 
   * Logging configurable via LOG_LEVEL (no|normal|debug) y LOG_FILE opcional.
     - vac-common.sh: log() para eventos importantes; log_debug() para eventos
