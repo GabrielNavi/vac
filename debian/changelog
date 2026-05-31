@@ -1,3 +1,15 @@
+vx-dga-l-vac (0.9-18~rc) unstable; urgency=low
+
+  * vac-common.sh: save_identity() usa fichero temporal con PID
+    (identity.json.tmp.$$) en lugar de ruta fija compartida. Elimina la
+    race condition detectada en stress test de 20 procesos concurrentes,
+    donde dos procesos intentaban mover el mismo .tmp simultáneamente.
+    La variable global TMP_IDENTITY queda eliminada (huérfana tras el fix).
+  * vac-register: eliminada la re-declaración de TMP_IDENTITY en el bloque
+    de redirección a sub-instancia (también huérfana).
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Sun, 31 May 2026 12:00:00 +0200
+
 vx-dga-l-vac (0.9-17~rc) unstable; urgency=low
 
   * vac: valida el UUID local y lo regenera si está corrupto; vac-register y

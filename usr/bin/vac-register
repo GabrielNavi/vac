@@ -88,8 +88,6 @@ if [[ -n "$NAME" ]]; then
     # shellcheck disable=SC2034
     IDENTITY_FILE="${STATE_DIR}/identity.json"
     # shellcheck disable=SC2034
-    TMP_IDENTITY="${STATE_DIR}/identity.json.tmp"
-    # shellcheck disable=SC2034
     EXTRAS_IMP_FILE="${STATE_DIR}/extras_imperative.json"
     # shellcheck disable=SC2034
     EXTRAS_INF_FILE="${STATE_DIR}/extras_informative.json"

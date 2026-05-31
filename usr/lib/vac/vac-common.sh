@@ -27,7 +27,6 @@ VERSION_FILE="${STATE_DIR}/version"
 CLIENTS_FILE="${STATE_DIR}/clients.json"
 TMP_CLIENTS="${STATE_DIR}/clients.json.tmp"
 IDENTITY_FILE="${STATE_DIR}/identity.json"
-TMP_IDENTITY="${STATE_DIR}/identity.json.tmp"
 EXTRAS_IMP_FILE="${STATE_DIR}/extras_imperative.json"
 EXTRAS_INF_FILE="${STATE_DIR}/extras_informative.json"
 
@@ -194,6 +193,9 @@ get_mac() {
 #   no compara este campo).
 save_identity() {
     local host="$1" ip="$2" mac="$3" extra_imp="${4:-}" extra_inf="${5:-}"
+    # Tmp con PID para evitar colisión cuando vac y vac-register corren simultáneamente.
+    # mv es atómico: si dos procesos compiten, el último en llegar gana (ambos datos son válidos).
+    local tmp="${IDENTITY_FILE}.tmp.$$"
 
     jq -n \
         --arg     hostname  "$host"               \
@@ -207,11 +209,11 @@ save_identity() {
             mac:               $mac,
             extra_imperative:  $extra_imp,
             extra_informative: $extra_inf
-        }' > "$TMP_IDENTITY" 2>/dev/null \
-    && mv "$TMP_IDENTITY" "$IDENTITY_FILE" \
+        }' > "$tmp" 2>/dev/null \
+    && mv "$tmp" "$IDENTITY_FILE" \
     || {
         log "[IDENTITY] Error escribiendo $IDENTITY_FILE"
-        rm -f "$TMP_IDENTITY"
+        rm -f "$tmp"
         return 1
     }
 
