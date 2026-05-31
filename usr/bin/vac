@@ -255,7 +255,7 @@ while true; do
 
         remote_ver="$(get_remote_version)"
         if [[ -n "$remote_ver" && "$remote_ver" =~ ^[0-9]+$ ]]; then
-            echo "$remote_ver" > "$VERSION_FILE"
+            write_version "$remote_ver"
             log "[STARTUP] Versión local inicializada: $remote_ver"
         fi
 
@@ -345,7 +345,7 @@ while true; do
                 download_clients || log "[SYNC-ERROR] No se pudo descargar el inventario. Continuando."
             fi
             refresh_identity || log "[IDENTITY] No se pudo refrescar identity desde VAS. Continuando."
-            echo "$remote_version_raw" > "$VERSION_FILE"
+            write_version "$remote_version_raw"
             log "[SYNC] Versión local actualizada: $remote_version_raw"
         else
             log_debug "[VERSION] Sin cambios."

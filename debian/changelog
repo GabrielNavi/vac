@@ -7,10 +7,20 @@ vx-dga-l-vac (0.9-17~rc) unstable; urgency=low
   * vac-sub: valida el UUID derivado de la subinstancia y lo regenera si es
     inválido. Se añaden manpages para vac, vac-register, vac-sub,
     vac-sub-manager y vac-sub-instance.
+  * vac-common.sh: upsert_extra_key() detecta extras_imperative.json corrupto
+    y reinicia el fichero vacío con [WARN], en lugar de fallar silenciosamente
+    en cada ciclo. Evita que una corrupción de disco bloquee permanentemente
+    el sistema de extras.
+  * vac-common.sh: upsert_extra_key(), delete_extra_key() y expire_extras()
+    usan flock(1) sobre un .lock por fichero para garantizar exclusión mutua
+    entre vac daemon y vac-register cuando ambos modifican extras
+    simultáneamente. Elimina la condición de carrera read-modify-write.
+  * vac, vac-sub: escritura del VERSION_FILE local via rename atómico (tmp+mv)
+    para coherencia con VAS y resiliencia ante interrupciones durante el write.
   * Paquetería: ajustados los scripts systemd, dependencias y metadatos del
     paquete para dejar lintian en estado limpio.
 
- -- Gabriel Navia <correos@gabrielnav.es>  Sat, 30 May 2026 19:00:00 +0200
+ -- Gabriel Navia <correos@gabrielnav.es>  Sun, 31 May 2026 09:00:00 +0200
 
 vx-dga-l-vac (0.9-16~rc) unstable; urgency=low
 

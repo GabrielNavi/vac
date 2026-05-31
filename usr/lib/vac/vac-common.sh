@@ -398,30 +398,44 @@ download_clients() {
 
 upsert_extra_key() {
     local file="$1" key="$2" data="$3"
-    local ts tmp current
-    # Timestamp formato YYYYMMDDHHMMSS — 14 dígitos, mismo espacio que la versión VAS.
+    local ts tmp current raw lock
     ts="$(date -u +%Y%m%d%H%M%S)"
     tmp="${file}.tmp"
-    current="{}"
-    [[ -f "$file" ]] && current="$(cat "$file")"
-
-    # Insertar/actualizar la clave y reordenar lexicalmente para diff determinista.
-    jq -c --arg key "$key" --arg ts "$ts" --argjson data "$data" \
-        '.[$key] = {"timestamp": $ts, "data": $data} | to_entries | sort_by(.key) | from_entries' \
-        <<< "$current" > "$tmp" \
-    && mv "$tmp" "$file" \
-    || { rm -f "$tmp"; return 1; }
+    lock="${file}.lock"
+    # flock garantiza exclusión mutua entre vac daemon y vac-register cuando
+    # ambos modifican el mismo fichero de extras simultáneamente.
+    (
+        flock -x 9
+        current="{}"
+        if [[ -f "$file" ]]; then
+            raw="$(cat "$file")"
+            if jq empty <<< "$raw" 2>/dev/null; then
+                current="$raw"
+            else
+                log "[WARN] [EXTRAS] $(basename "$file") corrupto — reiniciando vacío."
+            fi
+        fi
+        jq -c --arg key "$key" --arg ts "$ts" --argjson data "$data" \
+            '.[$key] = {"timestamp": $ts, "data": $data} | to_entries | sort_by(.key) | from_entries' \
+            <<< "$current" > "$tmp" \
+        && mv "$tmp" "$file" \
+        || { rm -f "$tmp"; return 1; }
+    ) 9>"$lock"
 }
 
 delete_extra_key() {
-    local file="$1" key="$2" tmp
+    local file="$1" key="$2" tmp lock
     [[ ! -f "$file" ]] && return 0
     tmp="${file}.tmp"
-    jq -c --arg key "$key" \
-        'del(.[$key]) | to_entries | sort_by(.key) | from_entries' \
-        "$file" > "$tmp" \
-    && mv "$tmp" "$file" \
-    || { rm -f "$tmp"; return 1; }
+    lock="${file}.lock"
+    (
+        flock -x 9
+        jq -c --arg key "$key" \
+            'del(.[$key]) | to_entries | sort_by(.key) | from_entries' \
+            "$file" > "$tmp" \
+        && mv "$tmp" "$file" \
+        || { rm -f "$tmp"; return 1; }
+    ) 9>"$lock"
 }
 
 expire_extras() {
@@ -450,16 +464,17 @@ expire_extras() {
 
     [[ "${#expired[@]}" -eq 0 ]] && return 0
 
-    local tmp="${file}.tmp"
-    # Construir array JSON de claves a eliminar y pasarlo como argumento a jq
-    # para evitar inyección si los nombres contienen caracteres especiales.
+    local tmp="${file}.tmp" lock="${file}.lock"
     local keys_json
     keys_json="$(printf '%s\n' "${expired[@]}" | jq -R . | jq -sc .)"
-    jq -c --argjson keys "$keys_json" \
-        'del(.[$keys[]]) | to_entries | sort_by(.key) | from_entries' \
-        "$file" > "$tmp" \
-    && mv "$tmp" "$file" \
-    || { rm -f "$tmp"; return 1; }
+    (
+        flock -x 9
+        jq -c --argjson keys "$keys_json" \
+            'del(.[$keys[]]) | to_entries | sort_by(.key) | from_entries' \
+            "$file" > "$tmp" \
+        && mv "$tmp" "$file" \
+        || { rm -f "$tmp"; return 1; }
+    ) 9>"$lock"
 }
 
 build_extras_merge() {
@@ -482,4 +497,18 @@ build_extras_merge() {
     fi
     # Con claves: extraer solo .data de cada entrada, sin los metadatos internos.
     jq -c 'to_entries | map({key: .key, value: .value.data}) | from_entries' "$file" 2>/dev/null || echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Escritura atómica del fichero de versión local
+# ---------------------------------------------------------------------------
+# write_version VERSION
+#   Escribe VERSION en VERSION_FILE usando rename atómico (tmp + mv) para
+#   evitar que una interrupción deje el fichero truncado o vacío.
+#   Coherente con la escritura atómica que usa VAS en Python (os.replace).
+# ---------------------------------------------------------------------------
+write_version() {
+    local ver="$1" tmp="${VERSION_FILE}.tmp"
+    echo "$ver" > "$tmp" && mv "$tmp" "$VERSION_FILE" \
+        || { rm -f "$tmp"; log "[WARN] No se pudo escribir VERSION_FILE."; }
 }
