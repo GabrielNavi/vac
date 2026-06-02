@@ -1,122 +1,203 @@
-# versatile-autoreg-vac — Versatile Autoregistration Client
+<div align="center">
+  <img src="assets/logo.svg" alt="VAC logo" width="100"/>
+  <h1>VAC — Versatile Autoregistration Client</h1>
+</div>
 
-Cliente de autoregistro de red. Registra el equipo en VAS con un UUID persistente como identidad estable, mantiene heartbeats de liveness y una copia local del inventario. Soporta campos extra extensibles y registro simultáneo en múltiples servidores VAS mediante sub-instancias.
+[![en](https://img.shields.io/badge/lang-en-blue.svg)](README.md)
+[![es](https://img.shields.io/badge/lang-es-green.svg)](README.es.md)
 
-## Ecosistema
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Debian package](https://img.shields.io/badge/package-versatile--autoreg--vac-brightgreen)](https://github.com/GabrielNavi/vac/releases)
+[![Bash](https://img.shields.io/badge/shell-bash-89e051.svg)](https://www.gnu.org/software/bash/)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-lightgrey.svg)]()
 
-```
-versatile-autoreg-vas          → servidor de inventario
-versatile-autoreg-vac          → cliente de autoregistro (este paquete)
-versatile-autoreg-val          → consumidor genérico con hooks
-versatile-autoreg-veyon-sync   → integración Veyon opcional
-```
+Autoregistration client for centrally managed Linux networks. Registers the machine in VAS with a persistent UUID, maintains liveness heartbeats, and publishes extensible extra fields. Supports simultaneous registration in multiple VAS servers via sub-instances.
 
-## Requisitos
+---
 
-- `bash`, `curl`, `jq`, `uuid-runtime`, `iproute2`
-- `versatile-autoreg-vas >= 0.9-1`
+## Table of Contents
 
-## Archivos instalados
+- [Ecosystem](#ecosystem)
+- [Quick Start](#quick-start)
+- [Installed Files](#installed-files)
+- [Configuration](#configuration)
+- [Main Loop](#main-loop)
+- [Extras System](#extras-system)
+- [Parallelization](#parallelization)
+- [Service Management](#service-management)
+- [Wiki](#wiki)
+- [License](#license)
 
-| Ruta | Descripción |
-|---|---|
-| `/usr/bin/vac` | Servicio en bucle (dos temporizadores independientes: selfcheck + heartbeat) |
-| `/usr/bin/vac-register` | Registro puntual e idempotente (timers, scripts externos) |
-| `/usr/bin/vac-sub` | Bucle VAC completo para sub-instancias de paralelización |
-| `/usr/bin/vac-sub-manager` | Supervisor de sub-instancias con fail counter |
-| `/usr/bin/vac-sub-instance` | CLI para crear, listar y eliminar sub-instancias |
-| `/usr/lib/vac/vac-common.sh` | Librería compartida: log, red, identidad, extras, registro |
-| `/etc/vac/vac.conf` | Configuración principal |
-| `/usr/share/vac/vac.conf.defaults` | Referencia exhaustiva de todas las variables (solo lectura) |
-| `/usr/share/vac/instance-template/vac.conf` | Plantilla para nuevas sub-instancias |
+---
 
-## Estado local
-
-| Ruta | Descripción |
-|---|---|
-| `/etc/vac/vac-id` | UUID persistente del equipo (generado una vez, modo 600) |
-| `/etc/vac/vac.sub/<name>/.enabled` | Marca de activación de sub-instancia |
-| `/var/lib/vac/version` | Última versión del registro conocida |
-| `/var/lib/vac/identity.json` | Datos propios tal como los confirma VAS |
-| `/var/lib/vac/clients.json` | Copia local del inventario (`SYNC_CLIENTS=true`) |
-| `/var/lib/vac/extras_imperative.json` | Estado interno de extras imperativos (con timestamps TTL) |
-| `/var/lib/vac/extras_informative.json` | Estado interno de extras informativos |
-
-## Configuración
-
-```ini
-# /etc/vac/vac.conf  (referencia completa en vac.conf.defaults)
-VAS_HOST=10.0.0.1        # IP/hostname; sin scheme, sin puerto si usa el 8000
-# VAS_SCHEME=http        # http (defecto) | https
-CHECK_SECONDS=300        # selfcheck + comparación de versión
-# HEARTBEAT_SECONDS=60   # liveness independiente del selfcheck; vacío = igual a CHECK
-SYNC_CLIENTS=false
-EXTRAS_ENABLED=true
-EXTRAS_TTL=86400
-LOG_LEVEL=normal
-PARALLEL_MODE=both
-```
-
-`VAS_HOST` acepta `10.0.0.1`, `10.0.0.1:9000` o `vas.ejemplo.org`. El scheme (`http://...`) se extrae automáticamente con `[WARN]`. Puerto `:8000` implícito si no se especifica.
-
-## Bucle principal
+## Ecosystem
 
 ```
-Cada CHECK_SECONDS:
-  collect_extras() → selfcheck vs identity.json
-  Con cambios → POST /register; guarda identity.json
-  GET /version → si nueva: GET /clients (SYNC_CLIENTS=true) + refrescar identity
-
-Cada HEARTBEAT_SECONDS:
-  POST /heartbeat → si 404 o error: POST /register (re-registro completo)
+VAC  ──POST /register──►  VAS  ──bump──►  VAL
+     ──POST /heartbeat──►
 ```
 
-Un registro exitoso en cualquier bloque resetea el temporizador del otro, evitando señales redundantes en el mismo ciclo.
+| Package | Repository | Description |
+|---------|------------|-------------|
+| `versatile-autoreg-vas` | [vas](https://github.com/GabrielNavi/vas) | Inventory server |
+| `versatile-autoreg-vac` | [vac](https://github.com/GabrielNavi/vac) ← *this* | Autoregistration client |
+| `versatile-autoreg-val` | [val](https://github.com/GabrielNavi/val) | Generic consumer with hooks |
+| `versatile-autoreg-vaf` | vaf | Server federation (experimental) |
 
-## Sistema de extras multi-fuente
+---
 
-Cada clave de `extra_imperative` / `extra_informative` se gestiona de forma independiente con timestamp interno. Los productores cíclicos y los puntuales coexisten sin pisarse.
+## Quick Start
 
 ```bash
-# Hook cíclico: script ejecutable en extras_imperative.d/
-# La clave es el basename sin extensión; timeout 10 s por hook
+# Install
+sudo dpkg -i versatile-autoreg-vac_*.deb
+sudo apt-get -f install
+
+# Configure — minimum required
+sudo nano /etc/vac/vac.conf
+# VAS_HOST=10.0.0.1
+
+# Start
+sudo systemctl enable --now vac
+
+# Verify
+journalctl -u vac -f
+```
+
+> **Dependencies:** `bash`, `curl`, `jq`, `uuid-runtime`, `iproute2`  
+> See [Installation](https://github.com/GabrielNavi/vac/wiki/EN_Install) in the wiki for full instructions.
+
+---
+
+## Installed Files
+
+| Path | Description |
+|------|-------------|
+| `/usr/bin/vac` | Main service loop (two independent timers: selfcheck + heartbeat) |
+| `/usr/bin/vac-register` | One-shot idempotent registration (for timers, external scripts) |
+| `/usr/bin/vac-sub` | Full VAC loop for parallelization sub-instances |
+| `/usr/bin/vac-sub-manager` | Sub-instance supervisor with fail counter |
+| `/usr/bin/vac-sub-instance` | CLI to create, list and delete sub-instances |
+| `/usr/lib/vac/vac-common.sh` | Shared library: log, network, identity, extras, registration |
+| `/etc/vac/vac.conf` | Main configuration file |
+| `/etc/vac/vac.conf.d/` | Config overlays in lexical order |
+| `/etc/vac/extras_imperative.d/` | Cyclic hook scripts for imperative extras |
+| `/etc/vac/extras_informative.d/` | Cyclic hook scripts for informative extras |
+| `/usr/share/vac/vac.conf.defaults` | Exhaustive variable reference (read-only) |
+| `/lib/systemd/system/vac.service` | systemd unit |
+
+**Runtime state:**
+
+| Path | Description |
+|------|-------------|
+| `/etc/vac/vac-id` | Persistent machine UUID (generated once, mode 600) |
+| `/var/lib/vac/identity.json` | Own data as confirmed by VAS |
+| `/var/lib/vac/version` | Last known inventory version |
+| `/var/lib/vac/clients.json` | Local inventory copy (`SYNC_CLIENTS=true`) |
+
+---
+
+## Configuration
+
+```ini
+# /etc/vac/vac.conf  (full reference at /usr/share/vac/vac.conf.defaults)
+
+VAS_HOST=10.0.0.1        # IP/hostname — no scheme, port 8000 implicit
+# VAS_SCHEME=http        # http (default) | https
+CHECK_SECONDS=300        # selfcheck + version comparison interval
+# HEARTBEAT_SECONDS=60   # liveness heartbeat; empty = same as CHECK_SECONDS
+SYNC_CLIENTS=false       # download local inventory copy
+EXTRAS_ENABLED=true
+EXTRAS_TTL=86400         # key expiry in seconds (0 = no expiry)
+LOG_LEVEL=normal         # no | normal | debug
+PARALLEL_MODE=both       # both | only_parallel | only_main
+```
+
+`VAS_HOST` accepts `10.0.0.1`, `10.0.0.1:9000` or `vas.example.org`. The scheme (`http://...`) is extracted automatically with `[WARN]`.
+
+Full guide: [Configuration](https://github.com/GabrielNavi/vac/wiki/EN_Config)
+
+---
+
+## Main Loop
+
+```
+Every CHECK_SECONDS:
+  collect_extras() → selfcheck vs identity.json
+  If changed → POST /register; save identity.json
+  GET /version → if new: GET /clients (SYNC_CLIENTS) + refresh identity
+
+Every HEARTBEAT_SECONDS:
+  POST /heartbeat → if 404 or error: POST /register (full re-registration)
+```
+
+A successful registration in either block resets the other timer, avoiding redundant signals in the same cycle.
+
+More details: [Operation Flow](https://github.com/GabrielNavi/vac/wiki/EN_Operation)
+
+---
+
+## Extras System
+
+Each key in `extra_imperative` / `extra_informative` is managed independently with an internal timestamp. Cyclic producers and one-shot producers coexist without conflict.
+
+```bash
+# Cyclic hook: executable script in extras_imperative.d/
+# Key = basename without extension; 10s timeout per hook
 echo '{"server": "10.0.0.2"}'   # /etc/vac/extras_imperative.d/10-cups.sh
 
-# Productor externo puntual (idempotente)
+# External one-shot producer (idempotent)
 echo '{"server":"10.0.0.2"}' | vac-register --imperative --key cups -
 
-# Eliminar una clave
+# Delete a key
 vac-register --imperative --key cups -d
 ```
 
-Con `EXTRAS_TTL=86400`, las claves sin actualizar en >24 h se eliminan automáticamente con `[WARN]` en log (detecta productores silenciados).
+With `EXTRAS_TTL=86400`, keys not updated in >24h are removed automatically with `[WARN]` in log (detects silenced producers).
 
-## Paralelización
+More details: [Extras](https://github.com/GabrielNavi/vac/wiki/EN_Extras)
 
-Un equipo puede registrarse en múltiples VAS con UUIDs distintos y estado independiente por sub-instancia:
+---
+
+## Parallelization
+
+A machine can register in multiple VAS servers with distinct UUIDs and independent state per sub-instance:
 
 ```bash
 vac-sub-instance --create samba --vas 10.0.1.5
 vac-sub-instance --list
-# NOMBRE   VAS_HOST        ENABLED  ESTADO
-# samba    10.0.1.5:8000   sí       activa
-systemctl restart vac   # con PARALLEL_MODE=both
+# NAME    VAS_HOST       ENABLED  STATUS
+# samba   10.0.1.5:8000  yes      active
+systemctl restart vac   # with PARALLEL_MODE=both
 ```
 
-`PARALLEL_MODE`: `both` (main + instancias) · `only_parallel` (`exec vac-sub-manager`) · `only_main` (sin instancias). Las sub-instancias sin fichero `.enabled` se ignoran (retrocompatibilidad con upgrades sin ese fichero).
+`PARALLEL_MODE`: `both` (main + instances) · `only_parallel` (`exec vac-sub-manager`) · `only_main` (no instances).
 
-El supervisor distingue fallos duros (proceso muerto en <30 s, posible error de config) de fallos transitorios y deja de reiniciar una instancia tras 5 fallos duros consecutivos.
+The supervisor distinguishes hard failures (process died in <30s) from transient ones and stops restarting an instance after 5 consecutive hard failures.
 
-## Servicio
+More details: [Parallelization](https://github.com/GabrielNavi/vac/wiki/EN_Sub-instances)
+
+---
+
+## Service Management
 
 ```bash
-systemctl status vac
-systemctl restart vac
+sudo systemctl status vac
+sudo systemctl restart vac
 journalctl -u vac -f
 journalctl -u vac | grep '\[SELFCHECK\]'
 journalctl -u vac | grep '\[PARALLEL\]'
+journalctl -u vac | grep '\[ERROR\]'
 ```
+
+---
 
 ## Wiki
 
-[Instalación](../../wiki/Instalacion) · [Configuración](../../wiki/Configuracion) · [Flujo de operación](../../wiki/Flujo-de-operacion) · [Paralelización](../../wiki/Paralelizacion) · [vac-register](../../wiki/vac-register) · [Logging](../../wiki/Logging)
+[Installation](https://github.com/GabrielNavi/vac/wiki/EN_Install) · [Configuration](https://github.com/GabrielNavi/vac/wiki/EN_Config) · [Operation](https://github.com/GabrielNavi/vac/wiki/EN_Operation) · [Extras](https://github.com/GabrielNavi/vac/wiki/EN_Extras) · [Sub-instances](https://github.com/GabrielNavi/vac/wiki/EN_Sub-instances) · [Logging](https://github.com/GabrielNavi/vac/wiki/EN_Logging)
+
+---
+
+## License
+
+[Apache License 2.0](LICENSE)
