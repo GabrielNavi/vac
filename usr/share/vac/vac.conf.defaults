@@ -112,7 +112,7 @@ PARALLEL_MODE=both
 # ---------------------------------------------------------------------------
 
 # Aplicar transformación VAT al inventario local (clients.json) tras descarga.
-# Requiere paquete vx-dga-l-vat instalado.
+# Requiere paquete versatile-autoreg-vat instalado.
 # true  → aplica VAT_PRESET a clients.json antes de que cualquier consumidor lo lea.
 # false → sin transformación (default).
 # USE_VAT=false

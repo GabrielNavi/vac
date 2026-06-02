@@ -1,20 +1,20 @@
-# vx-dga-l-vac — Versatile Autoregistration Client
+# versatile-autoreg-vac — Versatile Autoregistration Client
 
 Cliente de autoregistro de red. Registra el equipo en VAS con un UUID persistente como identidad estable, mantiene heartbeats de liveness y una copia local del inventario. Soporta campos extra extensibles y registro simultáneo en múltiples servidores VAS mediante sub-instancias.
 
 ## Ecosistema
 
 ```
-vx-dga-l-vas          → servidor de inventario
-vx-dga-l-vac          → cliente de autoregistro (este paquete)
-vx-dga-l-val          → consumidor genérico con hooks
-vx-dga-l-veyon-sync   → integración Veyon opcional
+versatile-autoreg-vas          → servidor de inventario
+versatile-autoreg-vac          → cliente de autoregistro (este paquete)
+versatile-autoreg-val          → consumidor genérico con hooks
+versatile-autoreg-veyon-sync   → integración Veyon opcional
 ```
 
 ## Requisitos
 
 - `bash`, `curl`, `jq`, `uuid-runtime`, `iproute2`
-- `vx-dga-l-vas >= 0.9-1`
+- `versatile-autoreg-vas >= 0.9-1`
 
 ## Archivos instalados
 

@@ -1,16 +1,16 @@
-Source: vx-dga-l-vac
+Source: versatile-autoreg-vac
 Priority: optional
 Maintainer: Gabriel Navia <correos@gabrielnav.es>
 Standards-Version: 4.7.0
 Build-Depends: debhelper-compat (= 13)
 Section: admin
 
-Package: vx-dga-l-vac
+Package: versatile-autoreg-vac
 Architecture: all
 Depends: curl, jq, uuid-runtime, iproute2, ${misc:Depends}
-Suggests: vx-dga-l-vat
+Suggests: versatile-autoreg-vat
 Description: Cliente de Autorregistro Versátil (VAC)
  Cliente Bash que registra el equipo en VAS y mantiene una copia local
  del inventario de red en /var/lib/vac/clients.json. Funciona como
  servicio systemd. La integración con Veyon se gestiona mediante el
- paquete opcional vx-dga-l-veyon-sync.
+ paquete opcional versatile-autoreg-veyon-sync.
