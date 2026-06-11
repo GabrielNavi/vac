@@ -42,7 +42,8 @@ VAC  ──POST /register──►  VAS  ──bump──►  VAL
 | `versatile-autoreg-vas` | [vas](https://github.com/GabrielNavi/vas) | Servidor de inventario |
 | `versatile-autoreg-vac` | [vac](https://github.com/GabrielNavi/vac) ← *este* | Cliente de autoregistro |
 | `versatile-autoreg-val` | [val](https://github.com/GabrielNavi/val) | Consumidor genérico con hooks |
-| `versatile-autoreg-vaf` | vaf | Federación de servidores (experimental) |
+| `versatile-autoreg-vaf` | [vaf](https://github.com/GabrielNavi/vaf) | Federación de servidores (beta) |
+| `versatile-autoreg-vat` | [vat](https://github.com/GabrielNavi/vat) | Transformador de inventarios (experimental) |
 
 ---
 
