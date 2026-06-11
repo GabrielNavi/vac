@@ -107,6 +107,8 @@ VAS_HOST=10.0.0.1        # IP/hostname — no scheme, port 8000 implicit
 CHECK_SECONDS=300        # selfcheck + version comparison interval
 # HEARTBEAT_SECONDS=60   # liveness heartbeat; empty = same as CHECK_SECONDS
 SYNC_CLIENTS=false       # download local inventory copy
+# USE_VAT=false          # optional: transform clients.json with VAT
+# VAT_PRESET=            # preset name for VAT transformation (downstream)
 EXTRAS_ENABLED=true
 EXTRAS_TTL=86400         # key expiry in seconds (0 = no expiry)
 LOG_LEVEL=normal         # no | normal | debug
@@ -114,6 +116,8 @@ PARALLEL_MODE=both       # both | only_parallel | only_main
 ```
 
 `VAS_HOST` accepts `10.0.0.1`, `10.0.0.1:9000` or `vas.example.org`. The scheme (`http://...`) is extracted automatically with `[WARN]`.
+
+When `USE_VAT=true`, VAC transforms the downloaded `clients.json` using a preset. See [VAT documentation](https://github.com/GabrielNavi/vat) for configuration.
 
 Full guide: [Configuration](https://github.com/GabrielNavi/vac/wiki/EN_Config)
 

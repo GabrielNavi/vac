@@ -107,6 +107,8 @@ VAS_HOST=10.0.0.1        # IP/hostname; sin scheme, puerto 8000 implícito
 CHECK_SECONDS=300        # intervalo de selfcheck + comparación de versión
 # HEARTBEAT_SECONDS=60   # liveness independiente; vacío = igual a CHECK_SECONDS
 SYNC_CLIENTS=false       # descargar copia local del inventario
+# USE_VAT=false          # opcional: transformar clients.json con VAT
+# VAT_PRESET=            # nombre del preset para transformación VAT (downstream)
 EXTRAS_ENABLED=true
 EXTRAS_TTL=86400         # expiración de claves en segundos (0 = sin límite)
 LOG_LEVEL=normal         # no | normal | debug
@@ -114,6 +116,8 @@ PARALLEL_MODE=both       # both | only_parallel | only_main
 ```
 
 `VAS_HOST` acepta `10.0.0.1`, `10.0.0.1:9000` o `vas.ejemplo.org`. El scheme se extrae automáticamente con `[WARN]`.
+
+Cuando `USE_VAT=true`, VAC transforma el `clients.json` descargado usando un preset. Véase la [documentación VAT](https://github.com/GabrielNavi/vat) para la configuración.
 
 Guía completa: [Configuración](https://github.com/GabrielNavi/vac/wiki/ES_Configuracion)
 
