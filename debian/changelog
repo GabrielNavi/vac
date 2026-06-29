@@ -1,3 +1,12 @@
+versatile-autoreg-vac (0.9.21) unstable; urgency=low
+
+  * debian/: vac.service y vac-sub.service movidos de lib/systemd/system/ a
+    debian/versatile-autoreg-vac.{vac,vac-sub}.service; eliminadas las
+    entradas correspondientes de debian/install. debhelper gestiona
+    automáticamente enable/start/stop/disable vía dh_installsystemd.
+
+ -- Gabriel Navia <correos@gabrielnav.es>  Mon, 29 Jun 2026 12:00:00 +0200
+
 versatile-autoreg-vac (0.9-18~rc) unstable; urgency=low
 
   * vac-common.sh: save_identity() usa fichero temporal con PID
